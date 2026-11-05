@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raj Trade</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#050505;color:#eee;font-family:Arial,sans-serif;height:100vh;overflow:hidden}
+header{display:none}
+.logo{font-weight:bold;font-size:19px;letter-spacing:1px}.logo span{color:#777}
+.status{font-size:11px;color:#aaa}
+.layout{display:grid;grid-template-columns:330px minmax(0,1fr);height:100vh}
+.sidebar{background:#0b0b0b;border-right:1px solid #292929;display:flex;flex-direction:column;min-height:0}
+.top{padding:14px;border-bottom:1px solid #292929}
+h3{font-size:13px;margin-bottom:12px}
+input,select,button{background:#111;color:#eee;border:1px solid #333;padding:10px;border-radius:3px;font-size:11px;outline:none}
+input{width:100%}
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+.filters select{width:100%;min-width:0}
+.stats{display:flex;justify-content:space-between;font-size:10px;color:#888;margin-top:11px}
+.coin-header,.coin-row{display:grid;grid-template-columns:minmax(0,1fr) 75px 55px;gap:5px;align-items:center}
+.coin-header{padding:11px 12px;font-size:10px;color:#777;border-bottom:1px solid #292929}
+.coin-list{overflow-y:auto;flex:1;contain:strict}
+.coin-row{height:49px;padding:5px 12px;border-bottom:1px solid #191919;cursor:pointer;contain:content}
+.coin-row:hover{background:#191919}.coin-row.active{background:#242424;border-left:3px solid white}
+.symbol{font-size:11px;font-weight:bold}.sub{font-size:10px;color:#777;margin-top:4px}
+.change,.rsi{text-align:right;font-size:11px}
+.positive{color:#eee}.negative{color:#888}.over{color:#fff;font-weight:bold}.under{color:#aaa;font-weight:bold}
+.empty{text-align:center;color:#777;padding:25px;font-size:11px}
+main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.market-info{padding:13px 18px;border-bottom:1px solid #292929;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.market-name{font-size:18px;font-weight:bold}.price{font-size:16px;margin-top:6px}
+.market-meta{display:flex;gap:20px;font-size:10px;color:#888}
+.market-meta strong{display:block;color:#eee;margin-top:5px;font-size:12px}
+.toolbar{display:flex;align-items:center;gap:7px;padding:9px 15px;border-bottom:1px solid #292929;flex-wrap:wrap}
+button{cursor:pointer}button.active{background:#eee;color:#000}
+.history-status{font-size:10px;color:#888;margin-left:5px}
+#barCountdown{color:#ddd;font-variant-numeric:tabular-nums;font-weight:bold}
+.chart-area{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.price-panel{flex:1 1 auto;min-height:125px;position:relative}
+#priceChart,#volumeChart,#rsiChart{width:100%;height:100%}
+.volume-panel{height:105px;min-height:55px;flex:0 0 auto;position:relative}
+.rsi-panel{height:120px;min-height:55px;flex:0 0 auto;position:relative;touch-action:none}
+.indicator-title{height:23px;flex:0 0 23px;padding:5px 14px;background:#0b0b0b;color:#999;font-size:10px;border-top:1px solid #292929}
+.resize-handle{height:7px;flex:0 0 7px;cursor:row-resize;background:#101010;border-top:1px solid #252525;border-bottom:1px solid #252525;position:relative;z-index:4;touch-action:none}
+.resize-handle:hover,.resize-handle.dragging{background:#555}
+.resize-handle:after{content:"";position:absolute;width:34px;height:2px;background:#777;left:50%;top:2px;transform:translateX(-50%);border-radius:2px}
+#loadProgress{position:absolute;left:12px;top:7px;z-index:5;font-size:10px;color:#999;pointer-events:none;background:#0b0b0b;padding:3px 6px}
+#chartContextMenu{display:none;position:fixed;z-index:10000;min-width:145px;background:#171717;border:1px solid #444;border-radius:5px;padding:4px;box-shadow:0 8px 24px #000a}
+#chartContextMenu button{width:100%;text-align:left;border:0;background:transparent;padding:9px 11px;font-size:11px;color:#eee;border-radius:3px}
+#chartContextMenu button:hover{background:#303030}
+@media(max-width:750px){
+ body{overflow:auto;height:auto;min-height:100vh}
+ .layout{display:flex;flex-direction:column;height:auto;min-height:calc(100vh - 55px)}
+ .sidebar{height:43vh;min-height:260px;border-right:0}
+ main{height:100vh;min-height:560px}
+ .market-meta{gap:10px}
+}
+</style>
+</head>
+<body>
+<header>
+ <div class="logo">BYBIT <span>SCANNER PRO</span></div>
+ <div class="status">● <span id="connection">CONNECTING</span></div>
+</header>
+<div class="layout">
+<aside class="sidebar">
+ <div class="top">
+  <h3>MARKET SCANNER / USDT</h3>
+  <input id="search" placeholder="Search coin...">
+  <div class="filters">
+   <select id="changeFilter">
+    <option value="all">24H: All Coins</option>
+    <option value="gainers">Highest Gainers ↑</option>
+    <option value="losers">Highest Losers ↓</option>
+   </select>
+   <select id="rsiFilter">
+    <option value="all">All RSI</option>
+    <option value="over">RSI Above 70</option>
+    <option value="under">RSI Below 30</option>
+    <option value="normal">RSI 30-70</option>
+   </select>
+  </div>
+  <div class="stats"><span id="count">0 coins</span><span id="rsiCount">RSI scanning...</span></div>
+ </div>
+ <div class="coin-header"><span>COIN / PRICE</span><span style="text-align:right">24H %</span><span style="text-align:right">RSI</span></div>
+ <div class="coin-list" id="coinList"><div class="empty">Loading market...</div></div>
+</aside>
+<main>
+ <div class="market-info">
+  <div><div class="market-name" id="selectedName">BTCUSDT</div><div class="price" id="selectedPrice">Loading...</div></div>
+  <div class="market-meta">
+   <div>24H CHANGE<strong id="selectedChange">--</strong></div>
+   <div><span id="selectedRSILabel">30M RSI</span><strong id="selectedRSI">--</strong></div>
+   <div>VOLUME<strong id="selectedVolume">--</strong></div>
+  </div>
+ </div>
+ <div class="toolbar">
+  <button data-tf="1">1m</button><button data-tf="5">5m</button><button data-tf="15">15m</button>
+  <button class="active" data-tf="30">30m</button><button data-tf="60">1H</button>
+  <button data-tf="240">4H</button><button data-tf="D">1D</button><button data-tf="W">1W</button>
+  <span class="history-status" id="historyStatus">2 months history</span>
+  <span class="history-status" id="barCountdown" aria-live="off">NEXT BAR --:--</span>
+ </div>
+ <div class="chart-area">
+  <div class="price-panel" id="pricePanel"><div id="priceChart"></div></div>
+  <div class="resize-handle" id="priceResize" title="Drag to resize price / volume"></div>
+  <div class="volume-panel" id="volumePanel"><div id="volumeChart"></div></div>
+  <div class="indicator-title">RSI (14) | 70 OVERBOUGHT | 30 OVERSOLD</div>
+  <div class="resize-handle" id="rsiResize" title="Drag to resize volume / RSI panels"></div>
+  <div class="rsi-panel" id="rsiPanel"><div id="rsiChart"></div></div>
+ </div>
+</main>
+</div>
+<div id="chartContextMenu" role="menu" aria-label="Chart actions"><button id="refreshChartAction" type="button" role="menuitem">↻ Refresh Chart</button></div>
+<script>
+"use strict";
+const API="https://api.bybit.com";
+const WS="wss://stream.bybit.com/v5/public/linear";
+const $=id=>document.getElementById(id);
+let savedChartState={};
+try{savedChartState=JSON.parse(localStorage.getItem("bybitScannerChartState")||"{}")||{};}catch(e){}
+const chartViews=(savedChartState.views&&typeof savedChartState.views==="object")?savedChartState.views:{};
+const viewKey=(symbol,interval)=>symbol+"|"+interval;
+let coins=[],coinMap=new Map(),selected=(typeof savedChartState.symbol==="string"?savedChartState.symbol:"BTCUSDT"),tf=(typeof savedChartState.tf==="string"?savedChartState.tf:"30"),candles=[],socket=null,reconnectTimer=null;
+let pendingVisibleRange=savedChartState.visibleRange&&Number.isFinite(savedChartState.visibleRange.from)&&Number.isFinite(savedChartState.visibleRange.to)?savedChartState.visibleRange:null;
+let requestId=0,scannerBusy=false,scanAgain=false,scannerDone=false,rows=new Map(),filterTimer=null,filterScheduled=false;
+let historyBusy=false,historyToken=0;
+const chartCache=new Map();
+const intervalMs={"1":60000,"3":180000,"5":300000,"15":900000,"30":1800000,"60":3600000,"120":7200000,"240":14400000,"360":21600000,"720":43200000,"D":86400000,"W":604800000};
+function makeChart(id,extra={}){return LightweightCharts.createChart($(id),{
+ width:$(id).clientWidth||600,height:$(id).clientHeight||150,
+ layout:{background:{color:"#0b0b0b"},textColor:"#aaa"},
+ grid:{vertLines:{visible:false},horzLines:{visible:false}},
+ rightPriceScale:{borderColor:"#333",minimumWidth:90},timeScale:{borderColor:"#333",timeVisible:true},
+ crosshair:{mode:LightweightCharts.CrosshairMode.Normal},...extra
+});}
+const pc=makeChart("priceChart");
+const candleSeries=pc.addCandlestickSeries({upColor:"#ddd",downColor:"#444",borderUpColor:"#ddd",borderDownColor:"#444",wickUpColor:"#ddd",wickDownColor:"#666"});
+const vc=makeChart("volumeChart",{rightPriceScale:{borderColor:"#333",minimumWidth:90,visible:true,autoScale:true,scaleMargins:{top:.05,bottom:.05}},timeScale:{borderColor:"#333",timeVisible:true,visible:false},handleScroll:{mouseWheel:false,pressedMouseMove:false,horzTouchDrag:false,vertTouchDrag:false},handleScale:{axisPressedMouseMove:{price:true,time:false},axisDoubleClickReset:{price:true,time:false},mouseWheel:false,pinch:false}});
+
+function volumeMA(data,period=20){
+ const out=[];
+ let sum=0;
+ for(let i=0;i<data.length;i++){
+  sum+=data[i].volume||0;
+  if(i>=period)sum-=data[i-period].volume||0;
+  if(i>=period-1)out.push({time:data[i].time,value:sum/period});
+ }
+ return out;
+}
+function refreshIndicatorSeries(){
+ const vals=rsiArray(candles);
+ // Keep a time-scale point for EVERY candle. The first 14 RSI values are
+ // whitespace points, not omitted points, so RSI candle N stays directly
+ // underneath price/volume candle N instead of shifting left by 14 bars.
+ rsiSeries.setData(candles.map((c,i)=>{
+  const value=vals[i];
+  return Number.isFinite(value)?{time:c.time,value:value}:{time:c.time};
+ }));
+ volumeMaSeries.setData(volumeMA(candles));
+}
+// Coalesce live indicator work to one paint per animation frame. This avoids
+// repeatedly rebuilding RSI/volume-MA data when several websocket updates arrive
+// together, while keeping the displayed values in step with the live candle.
+let livePaintPending=false;
+function scheduleLivePaint(){
+ if(livePaintPending)return;
+ livePaintPending=true;
+ requestAnimationFrame(()=>{
+  livePaintPending=false;
+  refreshIndicatorSeries();
+  const vals=rsiArray(candles),last=vals.length?vals[vals.length-1]:null;
+  if(last!==null&&last!==undefined){
+   const coin=coinMap.get(selected);
+   if(coin){coin.rsi=last;updateCoinRow(coin);}
+   if($("rsiFilter").value!=="all")scheduleFilter();
+  }
+  updateInfo();updateBarCountdown();
+ });
+}
+const rc=makeChart("rsiChart",{rightPriceScale:{borderColor:"#333",minimumWidth:90,visible:true,autoScale:true,scaleMargins:{top:.1,bottom:.1}},timeScale:{visible:false,borderColor:"#333"},handleScroll:{mouseWheel:false,pressedMouseMove:false,horzTouchDrag:false,vertTouchDrag:false},handleScale:{axisPressedMouseMove:{price:true,time:false},axisDoubleClickReset:{price:true,time:false},mouseWheel:false,pinch:false}});
+let volumeVerticalOffset=0,rsiVerticalOffset=0;
+const volumeSeries=vc.addHistogramSeries({priceFormat:{type:"volume"},priceScaleId:"right",lastValueVisible:false,priceLineVisible:false,autoscaleInfoProvider:original=>{
+ const info=original();if(!info)return null;
+ const span=info.priceRange.maxValue-info.priceRange.minValue;
+ info.priceRange.minValue+=volumeVerticalOffset;
+ info.priceRange.maxValue+=volumeVerticalOffset;
+ return info;
+}});
+const volumeMaSeries=vc.addLineSeries({color:"#ffffff",lineWidth:2,priceScaleId:"right",priceLineVisible:false,lastValueVisible:true,priceFormat:{type:"volume"},autoscaleInfoProvider:original=>{
+ const info=original();if(!info)return null;
+ info.priceRange.minValue+=volumeVerticalOffset;
+ info.priceRange.maxValue+=volumeVerticalOffset;
+ return info;
+}});
+const rsiSeries=rc.addLineSeries({color:"#eee",lineWidth:2,priceLineVisible:false,autoscaleInfoProvider:original=>{
+ const info=original();if(!info)return null;
+ info.priceRange.minValue=0+rsiVerticalOffset;
+ info.priceRange.maxValue=100+rsiVerticalOffset;
+ return info;
+}});
+// Indicator panels are vertically adjustable only: keep their candle/time axis
+// locked to the price chart, while allowing vertical scaling from the right axis.
+for(const indicatorChart of [vc,rc]){
+ indicatorChart.applyOptions({
+  handleScroll:{mouseWheel:false,pressedMouseMove:false,horzTouchDrag:false,vertTouchDrag:false},
+  handleScale:{axisPressedMouseMove:{price:true,time:false},axisDoubleClickReset:{price:true,time:false},mouseWheel:false,pinch:false}
+ });
+}
+const rsi70Line=rsiSeries.createPriceLine({price:70,color:"#777",lineStyle:LightweightCharts.LineStyle.Dashed,title:"70"});
+const rsi30Line=rsiSeries.createPriceLine({price:30,color:"#777",lineStyle:LightweightCharts.LineStyle.Dashed,title:"30"});
+const rsi50Line=rsiSeries.createPriceLine({price:50,color:"#555",lineStyle:LightweightCharts.LineStyle.Dotted,title:"50"});
+// Drag inside the Volume/RSI plotting areas to pan vertically.
+// The right-hand value axis is excluded; horizontal movement stays locked.
+function attachVerticalPlotDrag(chart,element,getOffset,setOffset,getSpan){
+ let drag=null;
+ // Capture pointer events before Lightweight Charts handles the canvas.
+ element.addEventListener("pointerdown",e=>{
+  if(e.button!==0)return;
+  const rect=element.getBoundingClientRect();
+  if(e.clientX>=rect.right-94)return; // keep the right value axis usable
+  const span=getSpan();
+  if(!Number.isFinite(span)||span<=0)return;
+  drag={pointerId:e.pointerId,startY:e.clientY,startOffset:getOffset(),span,height:Math.max(1,rect.height)};
+  try{element.setPointerCapture(e.pointerId);}catch(_){}
+  e.preventDefault();
+  e.stopImmediatePropagation();
+ },true);
+ element.addEventListener("pointermove",e=>{
+  if(!drag||drag.pointerId!==e.pointerId)return;
+  const delta=e.clientY-drag.startY;
+  setOffset(drag.startOffset+(delta/drag.height)*drag.span);
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  chart.priceScale("right").applyOptions({autoScale:true});
+ },true);
+ const finish=e=>{
+  if(!drag||drag.pointerId!==e.pointerId)return;
+  try{if(element.hasPointerCapture(e.pointerId))element.releasePointerCapture(e.pointerId);}catch(_){}
+  drag=null;
+ };
+ element.addEventListener("pointerup",finish,true);
+ element.addEventListener("pointercancel",finish,true);
+}
+function currentVolumeSpan(){
+ const max=candles.reduce((m,c)=>Math.max(m,c.volume||0),0);
+ return Math.max(max,1);
+}
+attachVerticalPlotDrag(vc,$("volumeChart"),()=>volumeVerticalOffset,v=>{volumeVerticalOffset=v;},currentVolumeSpan);
+attachVerticalPlotDrag(rc,$("rsiChart"),()=>rsiVerticalOffset,v=>{
+ // Pan the RSI viewport only; keep RSI values and 70/30/50 levels together.
+ rsiVerticalOffset=v;
+},()=>100);
+
+let syncingCharts=false;
+const syncedCharts=[pc,vc,rc];
+function saveChartState(){
+ try{
+  const range=pc.timeScale().getVisibleRange();
+  if(range)chartViews[viewKey(selected,tf)]={from:range.from,to:range.to};
+  const state={symbol:selected,tf,views:chartViews,visibleRange:range?{from:range.from,to:range.to}:pendingVisibleRange};
+  localStorage.setItem("bybitScannerChartState",JSON.stringify(state));
+ }catch(e){}
+}
+function syncAllCharts(source){
+ if(syncingCharts)return;
+ const range=source.timeScale().getVisibleLogicalRange();
+ if(!range)return;
+ syncingCharts=true;
+ try{
+  for(const chart of syncedCharts){
+   if(chart!==source)chart.timeScale().setVisibleLogicalRange(range);
+  }
+ }catch(e){}
+ syncingCharts=false;
+ if(source===pc)saveChartState();
+}
+// The price chart is the single horizontal-axis master. Secondary panels
+// cannot emit stale ranges while their data is being replaced for another coin.
+pc.timeScale().subscribeVisibleLogicalRangeChange(()=>syncAllCharts(pc));
+// Price is the master axis: wheel zoom, drag-scroll and scale changes on the
+// candle panel are mirrored immediately to both indicator panels.
+function alignChartsToPrice(){
+ const range=pc.timeScale().getVisibleLogicalRange();
+ if(!range)return;
+ syncingCharts=true;
+ try{
+  // Keep volume and RSI on the exact same logical candle window as price.
+  vc.timeScale().setVisibleLogicalRange({from:range.from,to:range.to});
+  rc.timeScale().setVisibleLogicalRange({from:range.from,to:range.to});
+ }catch(e){}
+ syncingCharts=false;
+}
+function restoreSavedRange(){
+ const saved=chartViews[viewKey(selected,tf)]||pendingVisibleRange;
+ if(!saved)return false;
+ try{
+  const first=candles[0]?.time,last=candles[candles.length-1]?.time;
+  if(first&&last&&saved.from>=first&&saved.to<=last){
+   pc.timeScale().setVisibleRange(saved);
+   alignChartsToPrice();
+   pendingVisibleRange=saved;
+   return true;
+  }
+ }catch(e){}
+ return false;
+}
+function rememberCurrentRange(){
+ try{
+  const range=pc.timeScale().getVisibleRange();
+  if(range)pendingVisibleRange={from:range.from,to:range.to};
+ }catch(e){}
+ saveChartState();
+}
+// Keep the same plotting area width on all panels. Only the price panel shows
+// time labels; volume and RSI remain horizontally locked to its candle axis.
+vc.applyOptions({timeScale:{visible:false,borderColor:"#333",timeVisible:true}});
+rc.applyOptions({timeScale:{visible:false,borderColor:"#333",timeVisible:true}});
+function resize(){for(const [c,id] of [[pc,"priceChart"],[vc,"volumeChart"],[rc,"rsiChart"]]){const e=$(id);if(e.clientWidth>0&&e.clientHeight>0)c.resize(e.clientWidth,e.clientHeight);}requestAnimationFrame(()=>alignChartsToPrice());}
+const resizeObserver=new ResizeObserver(resize);
+["pricePanel","volumePanel","rsiPanel"].forEach(id=>resizeObserver.observe($(id)));
+window.addEventListener("resize",resize);
+function attachResizer(handleId,upperId,lowerId,lowerMin=55){
+ const handle=$(handleId),upper=$(upperId),lower=$(lowerId);
+ let startY=0,startUpper=0,startLower=0;
+ handle.addEventListener("pointerdown",e=>{
+  if(window.innerWidth<=750)return;
+  startY=e.clientY;startUpper=upper.getBoundingClientRect().height;startLower=lower.getBoundingClientRect().height;
+  handle.classList.add("dragging");handle.setPointerCapture(e.pointerId);e.preventDefault();
+ });
+ handle.addEventListener("pointermove",e=>{
+  if(!handle.hasPointerCapture(e.pointerId))return;
+  const delta=e.clientY-startY;
+  const total=startUpper+startLower;
+  let newUpper=Math.max(100,Math.min(total-lowerMin,startUpper+delta));
+  let newLower=total-newUpper;
+  if(upperId==="pricePanel"){upper.style.flex="0 0 "+newUpper+"px";lower.style.height=newLower+"px";}
+  else {upper.style.height=newUpper+"px";lower.style.height=newLower+"px";}
+  resize();
+ });
+ const end=e=>{if(handle.hasPointerCapture(e.pointerId))handle.releasePointerCapture(e.pointerId);handle.classList.remove("dragging");};
+ handle.addEventListener("pointerup",end);handle.addEventListener("pointercancel",end);
+}
+attachResizer("priceResize","pricePanel","volumePanel",55);
+attachResizer("rsiResize","volumePanel","rsiPanel",55);
+
+async function getJSON(path){
+ const res=await fetch(API+path,{cache:"no-store"});
+ if(!res.ok)throw Error("HTTP "+res.status);
+ const j=await res.json();
+ if(j.retCode!==0)throw Error(j.retMsg||"Bybit API error "+j.retCode);
+ return j.result;
+}
+function fmt(v){return Number(v||0).toLocaleString("en-US",{maximumFractionDigits:8});}
+function volumeFmt(v){if(v>=1e9)return(v/1e9).toFixed(2)+"B";if(v>=1e6)return(v/1e6).toFixed(2)+"M";if(v>=1e3)return(v/1e3).toFixed(2)+"K";return Number(v||0).toFixed(2);}
+function calcRSI(data,p=14){
+ if(data.length<=p)return null;let gain=0,loss=0;
+ for(let i=1;i<=p;i++){const d=data[i].close-data[i-1].close;gain+=Math.max(d,0);loss+=Math.max(-d,0);}
+ let ag=gain/p,al=loss/p,last=al===0?100:100-100/(1+ag/al);
+ for(let i=p+1;i<data.length;i++){const d=data[i].close-data[i-1].close;ag=(ag*(p-1)+Math.max(d,0))/p;al=(al*(p-1)+Math.max(-d,0))/p;last=al===0?100:100-100/(1+ag/al);}
+ return last;
+}
+function rsiArray(data,p=14){
+ if(data.length<=p)return[];const out=Array(data.length).fill(null);let gain=0,loss=0;
+ for(let i=1;i<=p;i++){const d=data[i].close-data[i-1].close;gain+=Math.max(d,0);loss+=Math.max(-d,0);}
+ let ag=gain/p,al=loss/p;out[p]=al===0?100:100-100/(1+ag/al);
+ for(let i=p+1;i<data.length;i++){const d=data[i].close-data[i-1].close;ag=(ag*(p-1)+Math.max(d,0))/p;al=(al*(p-1)+Math.max(-d,0))/p;out[i]=al===0?100:100-100/(1+ag/al);}
+ return out;
+}
+function mapKlines(list){return list.map(c=>({time:Math.floor(Number(c[0])/1000),open:+c[1],high:+c[2],low:+c[3],close:+c[4],volume:+c[5]})).sort((a,b)=>a.time-b.time);}
+async function fetchKlinePage(symbol,interval,end,limit=1000){
+ const q=new URLSearchParams({category:"linear",symbol,interval,limit:String(limit),end:String(end)});
+ return getJSON("/v5/market/kline?"+q.toString());
+}
+async function getRecentKlines(symbol,interval){
+ const r=await getJSON("/v5/market/kline?category=linear&symbol="+encodeURIComponent(symbol)+"&interval="+encodeURIComponent(interval)+"&limit=1000");
+ return mapKlines(r.list||[]);
+}
+function twoMonthsAgo(){const d=new Date();d.setUTCMonth(d.getUTCMonth()-2);return Math.floor(d.getTime()/1000);}
+async function loadOlderHistory(symbol,interval,token){
+ if(historyBusy)return;historyBusy=true;
+ const start=twoMonthsAgo(),step=intervalMs[interval]||1800000;
+ try{
+  let end=candles.length?candles[0].time*1000-1:Date.now();
+  let allOld=[];
+  let pages=0;
+  while(Math.floor(end/1000)>start&&pages<120){
+   if(token!==historyToken||symbol!==selected||interval!==tf)return;
+   let result;
+   try{result=await fetchKlinePage(symbol,interval,end,1000);}
+   catch(err){
+    if(/10006|rate|too many/i.test(String(err))&&pages<3){await new Promise(r=>setTimeout(r,1000*(pages+1)));continue;}
+    throw err;
+   }
+   const page=mapKlines(result.list||[]);
+   if(!page.length)break;
+   const oldest=page[0].time;
+   allOld.push(...page);
+   pages++;
+   $("historyStatus").textContent="Loading history · "+allOld.length.toLocaleString()+" candles";
+   if(oldest<=start)break;
+   const nextEnd=oldest*1000-1;
+   if(nextEnd>=end)break;
+   end=nextEnd;
+   await new Promise(r=>setTimeout(r,100));
+  }
+  if(token!==historyToken||symbol!==selected||interval!==tf)return;
+  if(allOld.length){
+   const visible=pc.timeScale().getVisibleRange();
+   const merged=new Map();
+   [...allOld,...candles].forEach(c=>merged.set(c.time,c));
+   candles=[...merged.values()].sort((a,b)=>a.time-b.time);
+   setChart(false);
+   if(pendingVisibleRange){restoreSavedRange();}
+   else if(visible){try{pc.timeScale().setVisibleRange(visible);alignChartsToPrice();}catch(e){}}
+  }
+  $("historyStatus").textContent="History loaded · "+candles.length.toLocaleString()+" candles";
+ }catch(e){console.warn("Older history:",e);$("historyStatus").textContent="History partial · "+candles.length.toLocaleString()+" candles";}
+ finally{if(token===historyToken)historyBusy=false;}
+}
+function buildList(){
+ const search=$("search").value.trim().toUpperCase(),cf=$("changeFilter").value,rf=$("rsiFilter").value;
+ let list=coins.filter(c=>{
+  if(search&&!c.symbol.includes(search))return false;
+  if(rf==="over"&&(c.rsi===null||c.rsi<=70))return false;
+  if(rf==="under"&&(c.rsi===null||c.rsi>=30))return false;
+  if(rf==="normal"&&(c.rsi===null||c.rsi<30||c.rsi>70))return false;
+  return true;
+ });
+ if(cf==="gainers")list.sort((a,b)=>b.change-a.change);
+ else if(cf==="losers")list.sort((a,b)=>a.change-b.change);
+ else list.sort((a,b)=>b.volume-a.volume);
+ $("count").textContent=list.length+" / "+coins.length+" coins";
+ const over=coins.filter(c=>c.rsi!==null&&c.rsi>70).length,under=coins.filter(c=>c.rsi!==null&&c.rsi<30).length;
+ $("rsiCount").textContent="70+: "+over+" | 30-: "+under;
+ const container=$("coinList"),wanted=new Set(list.map(c=>c.symbol));
+ for(const [symbol,row] of rows){if(!wanted.has(symbol)){row.remove();rows.delete(symbol);}}
+ if(!list.length){container.innerHTML='<div class="empty">'+(!scannerDone&&rf!=="all"?"RSI scan running. Results will appear as they are found.":"No matching coins.")+'</div>';return;}
+ const empty=container.querySelector(".empty");if(empty)empty.remove();
+ const fragment=document.createDocumentFragment();
+ list.forEach(c=>{
+  let row=rows.get(c.symbol);
+  if(!row){row=document.createElement("div");row.className="coin-row";row.innerHTML='<div><div class="symbol"></div><div class="sub"></div></div><div class="change"></div><div class="rsi"></div>';row.dataset.symbol=c.symbol;rows.set(c.symbol,row);}
+  row.classList.toggle("active",c.symbol===selected);
+  row.querySelector(".symbol").textContent=c.symbol;row.querySelector(".sub").textContent="$"+fmt(c.price);
+  const ch=row.querySelector(".change");ch.textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";ch.className="change "+(c.change>=0?"positive":"negative");
+  const r=row.querySelector(".rsi");r.textContent=c.rsi===null?"--":c.rsi.toFixed(1);r.className="rsi "+(c.rsi!==null&&c.rsi>70?"over":c.rsi!==null&&c.rsi<30?"under":"");
+  fragment.appendChild(row);
+ });
+ container.appendChild(fragment);
+}
+function filterChanged(){clearTimeout(filterTimer);filterTimer=setTimeout(buildList,80);}
+$("search").addEventListener("input",filterChanged);$("changeFilter").addEventListener("change",buildList);$("rsiFilter").addEventListener("change",buildList);
+// Delegated click handler: works after filtering and row reordering.
+$("coinList").addEventListener("click",e=>{
+ const row=e.target.closest(".coin-row");
+ if(!row)return;
+ const symbol=row.dataset.symbol;
+ if(symbol&&coinMap.has(symbol)&&symbol!==selected)selectCoin(symbol,false,true);
+});
+function updateCoinRow(c){
+ const row=rows.get(c.symbol);if(!row)return;
+ row.querySelector(".sub").textContent="$"+fmt(c.price);
+ const el=row.querySelector(".change");el.textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";el.className="change "+(c.change>=0?"positive":"negative");
+ const r=row.querySelector(".rsi");
+ r.textContent=c.rsi===null||!Number.isFinite(c.rsi)?"--":c.rsi.toFixed(1);
+ r.className="rsi "+(c.rsi!==null&&c.rsi>70?"over":c.rsi!==null&&c.rsi<30?"under":"");
+}
+function timeframeLabel(value=tf){
+ const labels={"1":"1M","3":"3M","5":"5M","15":"15M","30":"30M","60":"1H","120":"2H","240":"4H","360":"6H","720":"12H","D":"1D","W":"1W"};
+ return labels[value]||String(value);
+}
+function updateInfo(){
+ const coin=coinMap.get(selected);if(!coin)return;
+ $("selectedRSILabel").textContent=timeframeLabel()+" RSI";
+ $("selectedName").textContent=selected;$("selectedPrice").textContent="$"+fmt(coin.price);
+ $("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";
+ const r=calcRSI(candles);$("selectedRSI").textContent=r===null?"--":r.toFixed(2);
+ if(Number.isFinite(r)){coin.rsi=r;updateCoinRow(coin);if($("rsiFilter").value!=="all")scheduleFilter();}
+ const last=candles[candles.length-1];$("selectedVolume").textContent=volumeFmt(last?.volume||0);
+}
+function setChart(fit=true){
+ candleSeries.setData(candles);
+ volumeSeries.setData(candles.map(c=>({time:c.time,value:c.volume,color:c.close>=c.open?"#aaa":"#444"})));
+ refreshIndicatorSeries();
+ if(fit){pc.timeScale().fitContent();}
+ alignChartsToPrice();
+ updateInfo();resize();
+}
+function closeSocket(){
+ clearTimeout(reconnectTimer);
+ if(socket){const old=socket;socket=null;old.onopen=null;old.onmessage=null;old.onclose=null;old.close();}
+}
+function connectSocket(symbol=selected, interval=tf){
+ closeSocket();
+ const ws=new WebSocket(WS);socket=ws;
+ ws.onopen=()=>{
+  if(socket!==ws||selected!==symbol||tf!==interval)return;
+  $("connection").textContent="LIVE";
+  ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));
+ };
+ ws.onmessage=event=>{
+  if(socket!==ws||selected!==symbol||tf!==interval)return;
+  let msg;try{msg=JSON.parse(event.data);}catch(e){return;}
+  if(!msg.data)return;
+  if(msg.topic==="tickers."+symbol){
+   const d=Array.isArray(msg.data)?msg.data[0]:msg.data,coin=coinMap.get(symbol);if(!coin)return;
+   if(d.lastPrice!==undefined)coin.price=+d.lastPrice;
+   if(d.price24hPcnt!==undefined)coin.change=+d.price24hPcnt*100;
+   $("selectedPrice").textContent="$"+fmt(coin.price);
+   $("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";
+   updateCoinRow(coin);
+  }
+  if(msg.topic==="kline."+interval+"."+symbol){
+   const arr=Array.isArray(msg.data)?msg.data:[msg.data];
+   for(const d of arr){
+    const c={time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume};
+    const lastIndex=candles.length-1,lastCandle=candles[lastIndex];
+    if(lastCandle&&lastCandle.time===c.time){
+     candles[lastIndex]=c;
+    }else if(!lastCandle||c.time>lastCandle.time){
+     candles.push(c);
+    }else{
+     // Rare out-of-order update: correct the historical point without sorting
+     // the full array on every normal live-candle tick.
+     const i=candles.findIndex(x=>x.time===c.time);
+     if(i>=0)candles[i]=c;else candles.push(c);
+     candles.sort((x,y)=>x.time-y.time);
+     candleSeries.setData(candles);
+     volumeSeries.setData(candles.map(x=>({time:x.time,value:x.volume,color:x.close>=x.open?"#aaa":"#444"})));
+    }
+    chartCache.set(symbol+"|"+interval,candles.slice());
+    if(!lastCandle||c.time>=lastCandle.time){
+     candleSeries.update(c);
+     volumeSeries.update({time:c.time,value:c.volume,color:c.close>=c.open?"#aaa":"#444"});
+    }
+    scheduleLivePaint();
+   }
+  }
+ };
+ ws.onerror=()=>{if(socket===ws)$("connection").textContent="WS ERROR";};
+ ws.onclose=()=>{
+  if(socket!==ws)return;
+  $("connection").textContent="RECONNECTING";
+  reconnectTimer=setTimeout(()=>{if(socket===ws&&selected===symbol&&tf===interval)connectSocket(symbol,interval);},2000);
+ };
+}
+function scheduleFilter(){
+ if(filterScheduled)return;
+ filterScheduled=true;
+ setTimeout(()=>{requestAnimationFrame(()=>{filterScheduled=false;buildList();});},120);
+}
+async function selectCoin(symbol,rangeAlreadySaved=false,forceFit=false){
+ if(!coinMap.has(symbol))return;
+ if(!rangeAlreadySaved)rememberCurrentRange();
+ selected=symbol;
+  volumeVerticalOffset=0;
+  rsiVerticalOffset=0;
+
+ pendingVisibleRange=chartViews[viewKey(selected,tf)]||null;
+ buildList();
+ try{localStorage.setItem("bybitScannerChartState",JSON.stringify({symbol:selected,tf,views:chartViews,visibleRange:pendingVisibleRange}));}catch(e){}
+ const id=++requestId;
+ historyToken++;historyBusy=false;
+ const token=historyToken;
+ closeSocket();
+
+ // Reset all panel time scales before replacing data. This prevents the old
+ // coin's logical index/range from hiding the newly selected coin's candles.
+ try{pc.timeScale().resetTimeScale();vc.timeScale().resetTimeScale();rc.timeScale().resetTimeScale();}catch(e){}
+ // Clear all three panels immediately so a previous coin can never remain visible.
+ candles=[];
+ candleSeries.setData([]);
+ volumeSeries.setData([]);
+ volumeMaSeries.setData([]);
+ rsiSeries.setData([]);
+ try{pc.timeScale().fitContent();}catch(e){}
+ $("selectedName").textContent=symbol;
+ $("selectedPrice").textContent="Loading chart...";
+ $("selectedChange").textContent="--";
+ $("selectedRSI").textContent="--";
+ $("selectedVolume").textContent="--";
+ $("historyStatus").textContent="Loading "+symbol+" candles...";
+ updateBarCountdown();
+
+ try{
+  const data=await getRecentKlines(symbol,tf);
+  if(id!==requestId||symbol!==selected)return;
+  if(!data.length)throw Error("Bybit returned no candle data");
+
+  candles=data;
+  chartCache.set(symbol+"|"+tf,data.slice());
+  // Replace data only after resetting the previous symbol's time-scale state.
+  // Then fit the new symbol first; apply its saved view only when it is valid.
+  try{pc.timeScale().resetTimeScale();vc.timeScale().resetTimeScale();rc.timeScale().resetTimeScale();}catch(e){}
+  candleSeries.setData(candles);
+  volumeSeries.setData(candles.map(c=>({time:c.time,value:c.volume,color:c.close>=c.open?"#aaa":"#444"})));
+  refreshIndicatorSeries();
+  pc.timeScale().fitContent();
+  alignChartsToPrice();
+  const restored=forceFit?false:restoreSavedRange();
+  if(!restored){pc.timeScale().fitContent();alignChartsToPrice();}
+  updateInfo();resize();
+  requestAnimationFrame(()=>{
+   if(id!==requestId||symbol!==selected)return;
+   if(forceFit){pc.timeScale().fitContent();alignChartsToPrice();rememberCurrentRange();}
+   else{
+    pc.timeScale().fitContent();
+    const applied=restoreSavedRange();
+    if(!applied)pc.timeScale().fitContent();
+    alignChartsToPrice();
+   }
+  });
+  updateBarCountdown();
+
+  connectSocket(symbol,tf);
+  $("historyStatus").textContent="Recent candles loaded · loading 2 months...";
+  loadOlderHistory(symbol,tf,token);
+ }catch(e){
+  console.error("Chart load failed for "+symbol+":",e);
+  if(id===requestId&&symbol===selected){
+   $("selectedPrice").textContent="Chart load failed · "+(e.message||"API error");
+   $("historyStatus").textContent="Could not load "+symbol+" chart";
+   $("connection").textContent="API ERROR";
+  }
+ }
+}
+async function changeTF(value){
+ if(tf===value)return;
+ rememberCurrentRange();
+ tf=value;
+ pendingVisibleRange=chartViews[viewKey(selected,tf)]||null;
+ document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===value));
+ await selectCoin(selected,true);
+ runScanner();
+}
+document.querySelectorAll("[data-tf]").forEach(b=>b.addEventListener("click",()=>changeTF(b.dataset.tf)));
+async function runScanner(){
+ if(scannerBusy){scanAgain=true;return;}scannerBusy=true;scannerDone=false;
+ // Scan every coin using the timeframe currently selected in the chart.
+ const scanInterval=tf;
+ const queue=coins.slice();let cursor=0,done=0,total=queue.length;$("rsiCount").textContent="Scanning "+timeframeLabel(scanInterval)+" RSI...";
+ async function worker(){
+  while(cursor<total){
+   const coin=queue[cursor++];
+   try{
+    const data=await getRecentKlines(coin.symbol,scanInterval);
+    // For the selected coin, use the exact chart candle series (including its live candle).
+    coin.rsi=coin.symbol===selected&&tf===scanInterval&&candles.length?calcRSI(candles):calcRSI(data);
+    updateCoinRow(coin);
+   }catch(e){if(coin.symbol!==selected)coin.rsi=null;}
+   done++;if(done%10===0||done===total){$("rsiCount").textContent="RSI "+done+"/"+total;scheduleFilter();}
+   await new Promise(r=>setTimeout(r,180));
+  }
+ }
+ try{await Promise.all([worker(),worker(),worker(),worker()]);scannerDone=true;buildList();}
+ finally{scannerBusy=false;if(scanAgain){scanAgain=false;runScanner();}}
+}
+function updateBarCountdown(){
+ const el=$("barCountdown");
+ if(!el)return;
+ const seconds= (intervalMs[tf]||1800000)/1000;
+ const now=Math.floor(Date.now()/1000);
+ const last=candles[candles.length-1];
+ const start=last?last.time:Math.floor(now/seconds)*seconds;
+ const remaining=Math.max(0,Math.ceil(start+seconds-now));
+ const h=Math.floor(remaining/3600),m=Math.floor((remaining%3600)/60),sec=remaining%60;
+ el.textContent="NEXT BAR "+(h?String(h).padStart(2,"0")+":":"")+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");
+}
+setInterval(updateBarCountdown,1000);
+async function loadMarket(){
+ try{
+  const result=await getJSON("/v5/market/tickers?category=linear");
+  coins=result.list.filter(x=>x.symbol.endsWith("USDT")).map(x=>({symbol:x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
+  coinMap=new Map(coins.map(c=>[c.symbol,c]));
+  if(!coinMap.has(selected))selected="BTCUSDT";
+  if(!intervalMs[tf])tf="30";
+  document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===tf));
+  $("connection").textContent="LIVE";buildList();
+  await selectCoin(selected);runScanner();
+ }catch(e){console.error(e);$("connection").textContent="API ERROR";$("coinList").innerHTML='<div class="empty">Bybit connection failed. Check internet / refresh page.</div>';}
+}
+async function refreshTickers(){
+ try{
+  const result=await getJSON("/v5/market/tickers?category=linear");
+  result.list.forEach(d=>{const c=coinMap.get(d.symbol);if(!c)return;c.price=+d.lastPrice;c.change=+d.price24hPcnt*100;c.volume=+d.turnover24h;updateCoinRow(c);});
+  const coin=coinMap.get(selected);if(coin){$("selectedPrice").textContent="$"+fmt(coin.price);$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";}
+ }catch(e){console.warn(e);}
+}
+setInterval(refreshTickers,20000);
+setInterval(()=>{if(scannerBusy)scanAgain=true;else runScanner();},300000);
+applyInitialLayout();
+function applyInitialLayout(){ $("volumePanel").style.height="105px";$("rsiPanel").style.height="120px"; }
+// Right-click any chart panel to open a small native-style action menu.
+const chartMenu=$("chartContextMenu");
+$("chart-area")?.addEventListener("contextmenu",e=>{e.preventDefault();});
+$("priceChart").addEventListener("contextmenu",showChartMenu);
+$("volumeChart").addEventListener("contextmenu",showChartMenu);
+$("rsiChart").addEventListener("contextmenu",showChartMenu);
+function showChartMenu(e){
+ e.preventDefault();
+ chartMenu.style.display="block";
+ const w=chartMenu.offsetWidth||145,h=chartMenu.offsetHeight||42;
+ chartMenu.style.left=Math.max(6,Math.min(e.clientX,window.innerWidth-w-6))+"px";
+ chartMenu.style.top=Math.max(6,Math.min(e.clientY,window.innerHeight-h-6))+"px";
+}
+function hideChartMenu(){chartMenu.style.display="none";}
+document.addEventListener("pointerdown",e=>{if(!chartMenu.contains(e.target))hideChartMenu();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")hideChartMenu();});
+$("refreshChartAction").addEventListener("click",()=>{hideChartMenu();selectCoin(selected,true,true);});
+loadMarket();
+</script>
+</body>
+</html>
