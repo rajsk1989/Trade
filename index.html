@@ -134,7 +134,7 @@ function makeChart(id,extra={}){return LightweightCharts.createChart($(id),{
  width:$(id).clientWidth||600,height:$(id).clientHeight||150,
  layout:{background:{color:"#B2BEB5"},textColor:"#000000"},
  grid:{vertLines:{visible:false},horzLines:{visible:false}},
- rightPriceScale:{borderColor:"#333",minimumWidth:90},timeScale:{borderColor:"#333",timeVisible:true},
+ rightPriceScale:{visible:true,borderColor:"#333",minimumWidth:90,autoScale:true,scaleMargins:{top:.08,bottom:.08}},timeScale:{borderColor:"#333",timeVisible:true},
  crosshair:{mode:LightweightCharts.CrosshairMode.Normal},...extra
 });}
 const pc=makeChart("priceChart");
