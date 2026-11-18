@@ -33,6 +33,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .market-info{padding:9px 14px;border-bottom:1px solid #292929;display:flex;align-items:center;gap:16px;min-height:43px}
 .coin-title{display:flex;align-items:baseline;gap:14px;min-width:0}
 .market-name{font-size:16px;font-weight:bold}.price{font-size:15px;color:#ddd;margin-top:0}
+.live-volume{margin-left:auto;white-space:nowrap;font-size:11px;color:#aaa;font-variant-numeric:tabular-nums}.live-volume strong{color:#eee;font-size:12px;margin-left:4px}
 .toolbar{display:flex;align-items:center;gap:7px;padding:9px 15px;border-bottom:1px solid #292929;flex-wrap:wrap}
 button{cursor:pointer}button.active{background:#eee;color:#000}
 .history-status{font-size:10px;color:#888;margin-left:5px}
@@ -89,7 +90,7 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
 <main>
  <div class="market-info">
   <div class="coin-title"><span class="market-name" id="selectedName">BTCUSDT</span><span class="price" id="selectedPrice">Loading...</span></div>
-  <span id="selectedChange" hidden></span><span id="selectedRSI" hidden></span><span id="selectedVolume" hidden></span>
+  <span id="selectedChange" hidden></span><span id="selectedRSI" hidden></span><span class="live-volume">LIVE VOL <strong id="selectedVolume">--</strong></span>
   <span id="selectedRSILabel" hidden></span><span id="historyStatus" hidden></span><span id="barCountdown" hidden></span>
   <span id="connection" hidden>CONNECTING</span>
  </div>
