@@ -34,7 +34,7 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
  <div class="coin-list" id="coinList"><div style="padding:20px;color:#8793a3">Loading Bybit markets...</div></div>
 </aside>
 <main>
- <div class="topbar"><div><div class="heading">RSI MULTI-TIMEFRAME HEATMAP</div><div class="subheading">Bybit Linear USDT Perpetual · RSI (14) · Live market data</div></div><div class="statusline"><div>MARKETS<strong id="marketCount">--</strong></div><div>SCAN STATUS<strong id="scanStatus">Starting...</strong></div><div>LAST UPDATE<strong id="lastUpdate">--</strong></div></div></div>
+ <div class="topbar"><div><div class="heading">RSI MULTI-TIMEFRAME HEATMAP</div><div class="subheading">Bybit + Binance USDT Perpetual Futures · RSI (14) · Live market data</div></div><div class="statusline"><div>MARKETS<strong id="marketCount">--</strong></div><div>SCAN STATUS<strong id="scanStatus">Starting...</strong></div><div>LAST UPDATE<strong id="lastUpdate">--</strong></div></div></div>
  <div class="summary" id="summary">
   <div class="tf-card"><div class="tf-title">1 MIN</div><div class="counts"><span class="green">70+: --</span><span class="red">30-: --</span></div></div>
   <div class="tf-card"><div class="tf-title">5 MIN</div><div class="counts"><span class="green">70+: --</span><span class="red">30-: --</span></div></div>
@@ -43,7 +43,7 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
   <div class="tf-card"><div class="tf-title">1 HOUR</div><div class="counts"><span class="green">70+: --</span><span class="red">30-: --</span></div></div>
  </div>
  <div class="heat-wrap">
-  <div class="section-title"><b>RSI HEATMAP · ALL USDT COINS</b><span class="muted" id="scanProgress">Waiting for scan...</span></div>
+  <div class="section-title"><b>RSI HEATMAP · BYBIT + BINANCE USDT FUTURES</b><span class="muted" id="scanProgress">Waiting for scan...</span></div>
   <div class="heat-scroll"><div id="heatBody"><div style="padding:20px;color:#8793a3">Loading market data...</div></div></div>
  </div>
  <div class="detail">
@@ -56,12 +56,12 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
 </main></div>
 <script>
 "use strict";
-const API="https://api.bybit.com",WS="wss://stream.bybit.com/v5/public/linear";
+const API="https://api.bybit.com",WS="wss://stream.bybit.com/v5/public/linear",BINANCE_API="https://fapi.binance.com",BINANCE_WS="wss://fstream.binance.com/stream?streams=";
 const TFS=["1","5","15","30","60"],TF_NAMES={"1":"1M","5":"5M","15":"15M","30":"30M","60":"1H","240":"4H","D":"1D"};
 const $=id=>document.getElementById(id);
 const filterState={rsiFilter:"over",filterTf:"30",changeFilter:"all",sort:"volume"};
 const filterValue=id=>filterState[id];
-let coins=[],coinMap=new Map(),selected="BTCUSDT",scanBusy=false,scanAbort=false,ws=null;
+let coins=[],coinMap=new Map(),selected="BYBIT:BTCUSDT",scanBusy=false,scanAbort=false,ws=null;
 const cache=new Map(),intervalMs={"1":60000,"5":300000,"15":900000,"30":1800000,"60":3600000,"240":14400000,"D":86400000};
 function fmt(n){return Number(n||0).toLocaleString("en-US",{maximumFractionDigits:8})}
 function volFmt(n){n=Number(n||0);return n>=1e9?(n/1e9).toFixed(2)+"B":n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(2)+"K":n.toFixed(2)}
@@ -72,15 +72,25 @@ function heatClass(v){return !Number.isFinite(v)?"heat-na":v>70?"heat-over":v<30
 function rsiText(v){return Number.isFinite(v)?v.toFixed(1):"--"}
 function visibleCoins(){const q=$("search").value.trim().toUpperCase().replace(/\\s+/g,"");const filter=filterValue("rsiFilter"),tf=filterValue("filterTf");let list=coins.filter(c=>!q||c.symbol.includes(q)||c.symbol.replace("USDT","").includes(q));if(filter!=="all")list=list.filter(c=>Number.isFinite(c.rsi[tf])&&(filter==="over"?c.rsi[tf]>70:c.rsi[tf]<30));const changeMode=filterValue("changeFilter");if(changeMode==="gainers")list.sort((a,b)=>b.change-a.change);else if(changeMode==="losers")list.sort((a,b)=>a.change-b.change);else{const mode=filterValue("sort");list.sort((a,b)=>{if(mode==="gainers")return b.change-a.change;if(mode==="losers")return a.change-b.change;if(mode==="over")return (Number.isFinite(b.rsi[tf])?b.rsi[tf]:-1)-(Number.isFinite(a.rsi[tf])?a.rsi[tf]:-1);if(mode==="under")return (Number.isFinite(a.rsi[tf])?a.rsi[tf]:101)-(Number.isFinite(b.rsi[tf])?b.rsi[tf]:101);return b.volume-a.volume})}return changeMode==="all"?list:list.slice(0,50)}
 function renderSummary(){const names=["1 MIN","5 MIN","15 MIN","30 MIN","1 HOUR"];$("summary").innerHTML=TFS.map((tf,i)=>{let over=coins.filter(c=>Number.isFinite(c.rsi[tf])&&c.rsi[tf]>70).length,under=coins.filter(c=>Number.isFinite(c.rsi[tf])&&c.rsi[tf]<30).length;return `<div class="tf-card"><div class="tf-title">${names[i]}</div><div class="counts"><span class="green">70+: ${over}</span><span class="red">30-: ${under}</span></div></div>`}).join("")}
-function renderHeatmap(){let list=visibleCoins();$("heatBody").innerHTML=list.map(c=>{const h=c.rsi["60"],tone=Number.isFinite(h)?(h>70?"over":h<30?"under":"mid"):"mid";return `<div class="heat-tile ${tone} ${c.symbol===selected?"selected":""}" data-symbol="${c.symbol}"><div class="tile-top"><span class="tile-symbol">${c.symbol.replace("USDT","")}/USDT</span><span class="tile-price">$${fmt(c.price)}</span></div><div class="tile-rsis">${TFS.map((tf,i)=>`<div class="tile-rsi ${heatClass(c.rsi[tf]).replace("heat-","")}"><small>${["1m","5m","15m","30m","1h"][i]}</small>${rsiText(c.rsi[tf])}</div>`).join("")}</div><div class="tile-bottom"><span class="tile-change ${c.change>=0?"green":"red"}">${c.change>=0?"+":""}${c.change.toFixed(2)}%</span><span class="tile-volume vol">VOL ${volFmt(c.volume)}</span></div></div>`}).join("")||(filterState.rsiFilter!=="all"&&!coins.some(c=>Number.isFinite(c.rsi[filterState.filterTf]))?'<div style="padding:20px;color:#8793a3">Loading 30m RSI values… matching coins will appear automatically</div>':'<div style="padding:20px;color:#8793a3">No coins match this filter</div>');renderCoinList()}
-function renderCoinList(){let list=visibleCoins();$("coinList").innerHTML=list.map(c=>`<div class="coin ${c.symbol===selected?"active":""}" data-symbol="${c.symbol}"><div><div class="sym">${c.symbol}</div><div class="sub coin-price">$${fmt(c.price)}</div></div><div class="right coin-change ${c.change>=0?"green":"red"}">${c.change>=0?"+":""}${c.change.toFixed(2)}%</div><div class="right ${c.rsi["30"]>70?"green":c.rsi["30"]<30?"red":""}">${rsiText(c.rsi["30"])}</div></div>`).join("")||'<div style="padding:16px;color:#8793a3">No matching coins</div>'}
-function updateSelected(){const c=coinMap.get(selected);if(!c)return;$("selectedName").textContent=selected;$("selectedPrice").textContent="$"+fmt(c.price);$("selectedVolume").textContent=volFmt(c.volume);$("selectedChange").textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";$("selectedChange").style.color=c.change>=0?"var(--green)":"var(--red)";["1","5","15","30","60"].forEach(tf=>{let el=$("r"+tf),v=c.rsi[tf];el.textContent=rsiText(v);el.style.color=v>70?"var(--green)":v<30?"var(--red)":"var(--text)"})}
-function updateLiveFields(){for(const c of coins){const tile=document.querySelector(`.heat-tile[data-symbol="${c.symbol}"]`);if(tile){const p=tile.querySelector(".tile-price"),v=tile.querySelector(".tile-volume"),ch=tile.querySelector(".tile-change");if(p)p.textContent="$"+fmt(c.price);if(v)v.textContent="VOL "+volFmt(c.volume);if(ch){ch.textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";ch.className="tile-change "+(c.change>=0?"green":"red")}}const row=document.querySelector(`.coin[data-symbol="${c.symbol}"]`);if(row){const p=row.querySelector(".coin-price"),ch=row.querySelector(".coin-change");if(p)p.textContent="$"+fmt(c.price);if(ch){ch.textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";ch.className="right coin-change "+(c.change>=0?"green":"red")}}}updateSelected()}
+function renderHeatmap(){let list=visibleCoins();$("heatBody").innerHTML=list.map(c=>{const h=c.rsi["60"],tone=Number.isFinite(h)?(h>70?"over":h<30?"under":"mid"):"mid";return `<div class="heat-tile ${tone} ${c.key===selected?"selected":""}" data-symbol="${c.key}"><div class="tile-top"><span class="tile-symbol">${c.symbol.replace("USDT","")}/USDT <small style="font-size:8px;color:#9bb2c7">${c.exchange}</small></span><span class="tile-price">$${fmt(c.price)}</span></div><div class="tile-rsis">${TFS.map((tf,i)=>`<div class="tile-rsi ${heatClass(c.rsi[tf]).replace("heat-","")}"><small>${["1m","5m","15m","30m","1h"][i]}</small>${rsiText(c.rsi[tf])}</div>`).join("")}</div><div class="tile-bottom"><span class="tile-change ${c.change>=0?"green":"red"}">${c.change>=0?"+":""}${c.change.toFixed(2)}%</span><span class="tile-volume vol">VOL ${volFmt(c.volume)}</span></div></div>`}).join("")||(filterState.rsiFilter!=="all"&&!coins.some(c=>Number.isFinite(c.rsi[filterState.filterTf]))?'<div style="padding:20px;color:#8793a3">Loading 30m RSI values… matching coins will appear automatically</div>':'<div style="padding:20px;color:#8793a3">No coins match this filter</div>');renderCoinList()}
+function renderCoinList(){let list=visibleCoins();$("coinList").innerHTML=list.map(c=>`<div class="coin ${c.key===selected?"active":""}" data-symbol="${c.key}"><div><div class="sym">${c.symbol} <small style="color:#8da3b8;font-size:8px">${c.exchange}</small></div><div class="sub coin-price">$${fmt(c.price)}</div></div><div class="right coin-change ${c.change>=0?"green":"red"}">${c.change>=0?"+":""}${c.change.toFixed(2)}%</div><div class="right ${c.rsi["30"]>70?"green":c.rsi["30"]<30?"red":""}">${rsiText(c.rsi["30"])}</div></div>`).join("")||'<div style="padding:16px;color:#8793a3">No matching coins</div>'}
+function updateSelected(){const c=coinMap.get(selected);if(!c)return;$("selectedName").textContent=c.exchange+" · "+c.symbol;$("selectedPrice").textContent="$"+fmt(c.price);$("selectedVolume").textContent=volFmt(c.volume);$("selectedChange").textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";$("selectedChange").style.color=c.change>=0?"var(--green)":"var(--red)";["1","5","15","30","60"].forEach(tf=>{let el=$("r"+tf),v=c.rsi[tf];el.textContent=rsiText(v);el.style.color=v>70?"var(--green)":v<30?"var(--red)":"var(--text)"})}
+function updateLiveFields(){for(const c of coins){const tile=document.querySelector(`.heat-tile[data-symbol="${c.key}"]`);if(tile){const p=tile.querySelector(".tile-price"),v=tile.querySelector(".tile-volume"),ch=tile.querySelector(".tile-change");if(p)p.textContent="$"+fmt(c.price);if(v)v.textContent="VOL "+volFmt(c.volume);if(ch){ch.textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";ch.className="tile-change "+(c.change>=0?"green":"red")}}const row=document.querySelector(`.coin[data-symbol="${c.key}"]`);if(row){const p=row.querySelector(".coin-price"),ch=row.querySelector(".coin-change");if(p)p.textContent="$"+fmt(c.price);if(ch){ch.textContent=(c.change>=0?"+":"")+c.change.toFixed(2)+"%";ch.className="right coin-change "+(c.change>=0?"green":"red")}}}updateSelected()}
 function updateAll(){renderHeatmap();renderSummary();updateSelected()}
 async function fetchKlinesWithRetry(symbol){
  let last;
  for(let attempt=0;attempt<3;attempt++){
-  try{return await api(`/v5/market/kline?category=linear&symbol=${symbol}&interval=1&limit=1000`)}
+  try{
+    const c=coinMap.get(symbol);
+    if(c?.exchange==="BINANCE"){
+     const r=await fetch(`${BINANCE_API}/fapi/v1/klines?symbol=${c.symbol}&interval=1m&limit=1000`,{cache:"no-store"});
+     if(!r.ok)throw Error("Binance HTTP "+r.status);
+     const rows=await r.json();
+     if(!Array.isArray(rows))throw Error(rows.msg||"Binance kline error");
+     return {list:rows};
+    }
+    return await api(`/v5/market/kline?category=linear&symbol=${c?.symbol||symbol}&interval=1&limit=1000`);
+   }
   catch(e){last=e;const wait=/RATE_LIMIT|10006|HTTP 429/i.test(String(e))?Math.min(5000,900*Math.pow(2,attempt)):250;if(attempt<2)await new Promise(r=>setTimeout(r,wait))}
  }
  throw last;
@@ -99,20 +109,20 @@ function aggregateBars(oneMinuteBars,minutes){
 function applyOneMinuteHistory(c,bars){
  const byTf={"1":bars,"5":aggregateBars(bars,5),"15":aggregateBars(bars,15),"30":aggregateBars(bars,30),"60":aggregateBars(bars,60)};
  c._rsiAt=c._rsiAt||{};
- for(const tf of TFS){c.rsi[tf]=rsi(byTf[tf]);c._rsiAt[tf]=Date.now();cache.set(c.symbol+"|"+tf,{data:byTf[tf],at:Date.now()})}
+ for(const tf of TFS){c.rsi[tf]=rsi(byTf[tf]);c._rsiAt[tf]=Date.now();cache.set(c.key+"|"+tf,{data:byTf[tf],at:Date.now()})}
 }
 const RSI_STORE_KEY="rsi_heatmap_cache_v3";
 const RSI_CACHE_TTL=5*60*1000;
 function restoreRsiCache(){
- try{const saved=JSON.parse(localStorage.getItem(RSI_STORE_KEY)||"{}");let restored=0;for(const c of coins){const row=saved[c.symbol];if(!row)continue;for(const tf of TFS){const item=row[tf];if(item&&Number.isFinite(item.value)&&Date.now()-item.at<RSI_CACHE_TTL){c.rsi[tf]=item.value;c._rsiAt=c._rsiAt||{};c._rsiAt[tf]=item.at;restored++}}}return restored}catch(e){return 0}
+ try{const saved=JSON.parse(localStorage.getItem(RSI_STORE_KEY)||"{}");let restored=0;for(const c of coins){const row=saved[c.key];if(!row)continue;for(const tf of TFS){const item=row[tf];if(item&&Number.isFinite(item.value)&&Date.now()-item.at<RSI_CACHE_TTL){c.rsi[tf]=item.value;c._rsiAt=c._rsiAt||{};c._rsiAt[tf]=item.at;restored++}}}return restored}catch(e){return 0}
 }
 let persistCounter=0;
 function persistRsiCache(){
- try{const saved={};for(const c of coins){const row={};for(const tf of TFS){if(Number.isFinite(c.rsi[tf]))row[tf]={value:c.rsi[tf],at:c._rsiAt?.[tf]||Date.now()}}if(Object.keys(row).length)saved[c.symbol]=row}localStorage.setItem(RSI_STORE_KEY,JSON.stringify(saved))}catch(e){console.warn("RSI cache storage",e)}
+ try{const saved={};for(const c of coins){const row={};for(const tf of TFS){if(Number.isFinite(c.rsi[tf]))row[tf]={value:c.rsi[tf],at:c._rsiAt?.[tf]||Date.now()}}if(Object.keys(row).length)saved[c.key]=row}localStorage.setItem(RSI_STORE_KEY,JSON.stringify(saved))}catch(e){console.warn("RSI cache storage",e)}
 }
 async function scanAll(){
  if(scanBusy||!coins.length)return;scanBusy=true;
- const priority=[...coins].sort((a,b)=>{if(a.symbol===selected)return -1;if(b.symbol===selected)return 1;return b.volume-a.volume});
+ const priority=[...coins].sort((a,b)=>{if(a.key===selected)return -1;if(b.key===selected)return 1;return b.volume-a.volume});
  const tasks=priority.filter(c=>!TFS.every(tf=>Number.isFinite(c.rsi[tf])&&c._rsiAt?.[tf]&&Date.now()-c._rsiAt[tf]<RSI_CACHE_TTL));
  let cursor=0,done=0,failed=0,total=tasks.length;const workers=10;
  const cached=coins.reduce((n,c)=>n+TFS.filter(tf=>Number.isFinite(c.rsi[tf])).length,0);
@@ -122,8 +132,8 @@ async function scanAll(){
  async function worker(){
   while(cursor<total&&!scanAbort){
    const c=tasks[cursor++];
-   try{const result=await fetchKlinesWithRetry(c.symbol);const bars=mapBars(result.list);if(bars.length>14)applyOneMinuteHistory(c,bars);else failed++}
-   catch(e){failed++;console.warn("RSI scan",c.symbol,e)}
+   try{const result=await fetchKlinesWithRetry(c.key);const bars=mapBars(result.list);if(bars.length>14)applyOneMinuteHistory(c,bars);else failed++}
+   catch(e){failed++;console.warn("RSI scan",c.key,e)}
    done++;
    if(done%5===0||done===total){const pct=Math.round(done/Math.max(total,1)*100);$("scanProgress").textContent=`${done.toLocaleString()} / ${total.toLocaleString()} coins · ${pct}% · ${failed} failed`;$("scanStatus").textContent=`Scanning ${pct}%`;$("progressBar").style.width=pct+"%";updateAll()}
    if(done%20===0)persistRsiCache();
@@ -134,8 +144,43 @@ async function scanAll(){
  finally{scanBusy=false;scanAbort=false;persistRsiCache();$("scanStatus").textContent=failed?`Complete · ${failed} retry later`:"Complete";$("lastUpdate").textContent=new Date().toLocaleTimeString();$("scanProgress").textContent=total?`Updated ${done.toLocaleString()} of ${total.toLocaleString()} coins · ${failed} failed`:`All ${coins.length.toLocaleString()} coins loaded from cache`;$("progressBar").style.width="100%";updateAll()}
 }
 function closeSocket(){if(ws){ws.onclose=null;ws.close();ws=null}}
-function connectSelectedSocket(){closeSocket();const symbol=selected;ws=new WebSocket(WS);const sock=ws;sock.onopen=()=>{if(ws!==sock)return;sock.send(JSON.stringify({op:"subscribe",args:[`tickers.${symbol}`,...TFS.map(x=>`kline.${x}.${symbol}`)]}));$("connection").textContent="● LIVE"};sock.onmessage=ev=>{if(ws!==sock||symbol!==selected)return;let m;try{m=JSON.parse(ev.data)}catch(e){return}if(!m.data)return;if(m.topic===`tickers.${symbol}`){let d=Array.isArray(m.data)?m.data[0]:m.data,c=coinMap.get(symbol);if(c){if(d.lastPrice)c.price=+d.lastPrice;if(d.price24hPcnt)c.change=+d.price24hPcnt*100;if(d.turnover24h)c.volume=+d.turnover24h;updateLiveFields()}}if(m.topic&&m.topic.startsWith("kline.")){const interval=m.topic.split(".")[1];if(!TFS.includes(interval))return;for(const d of m.data){let bar={time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume};const key=symbol+"|"+interval,old=cache.get(key);let arr=old?.data||[];const idx=arr.findIndex(x=>x.time===bar.time);if(idx>=0)arr[idx]=bar;else{arr.push(bar);arr.sort((a,b)=>a.time-b.time);if(arr.length>120)arr=arr.slice(-120)}cache.set(key,{data:arr,at:Date.now()});const c=coinMap.get(symbol);if(c){c.rsi[interval]=rsi(arr);updateSelected();renderSummary();const activeFilter=filterValue("rsiFilter");if(activeFilter!=="all"&&filterValue("filterTf")===interval)renderHeatmap();else{const tile=document.querySelector(`.heat-tile[data-symbol="${symbol}"]`);if(tile){const cell=tile.querySelectorAll(".tile-rsi")[TFS.indexOf(interval)];if(cell){cell.className="tile-rsi "+heatClass(c.rsi[interval]).replace("heat-","");cell.innerHTML=`<small>${["1m","5m","15m","30m","1h"][TFS.indexOf(interval)]}</small>${rsiText(c.rsi[interval])}`}}}}}}};sock.onclose=()=>{if(ws===sock){$("connection").textContent="● RECONNECTING";setTimeout(()=>{if(selected===symbol)connectSelectedSocket()},2500)}}}
-async function selectCoin(symbol){if(!coinMap.has(symbol))return;selected=symbol;renderHeatmap();updateSelected();connectSelectedSocket()}
+function connectSelectedSocket(){
+ closeSocket();
+ const c=coinMap.get(selected);if(!c)return;
+ const symbol=c.symbol;
+ if(c.exchange==="BINANCE"){
+  const streams=[`${symbol.toLowerCase()}@ticker`,...TFS.map(tf=>`${symbol.toLowerCase()}@kline_${tf==="60"?"1h":tf+"m"}`)];
+  const sock=new WebSocket(BINANCE_WS+streams.join("/"));ws=sock;
+  sock.onopen=()=>{if(ws===sock)$("connection").textContent="● BINANCE LIVE"};
+  sock.onmessage=ev=>{
+   if(ws!==sock||selected!==c.key)return;
+   let m;try{m=JSON.parse(ev.data)}catch(e){return}
+   const d=m.data||m;
+   if(d.e==="24hrTicker"){
+    c.price=+d.c;c.change=+d.P;c.volume=+d.q;updateLiveFields();
+   }else if(d.e==="kline"&&d.k){
+    const tf=({"1m":"1","5m":"5","15m":"15m","30m":"30m","1h":"60"})[d.k.i];
+    const interval=({"1":"1","5":"5","15m":"15","30m":"30","60":"60"})[tf]||tf;
+    if(!TFS.includes(interval))return;
+    const k=d.k,bar={time:Math.floor(+k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
+    const key=c.key+"|"+interval,old=cache.get(key);let arr=old?.data||[];
+    const idx=arr.findIndex(x=>x.time===bar.time);if(idx>=0)arr[idx]=bar;else{arr.push(bar);arr.sort((a,b)=>a.time-b.time);if(arr.length>120)arr=arr.slice(-120)}
+    cache.set(key,{data:arr,at:Date.now()});c.rsi[interval]=rsi(arr);updateSelected();renderSummary();
+    if(filterValue("rsiFilter")!=="all"&&filterValue("filterTf")===interval)renderHeatmap();
+   }
+  };
+  sock.onclose=()=>{if(ws===sock){$("connection").textContent="● RECONNECTING";setTimeout(()=>{if(selected===c.key)connectSelectedSocket()},2500)}};
+  return;
+ }
+ const sock=new WebSocket(WS);ws=sock;
+ sock.onopen=()=>{if(ws!==sock)return;sock.send(JSON.stringify({op:"subscribe",args:[`tickers.${symbol}`,...TFS.map(x=>`kline.${x}.${symbol}`)]}));$("connection").textContent="● BYBIT LIVE"};
+ sock.onmessage=ev=>{if(ws!==sock||selected!==c.key)return;let m;try{m=JSON.parse(ev.data)}catch(e){return}if(!m.data)return;
+  if(m.topic===`tickers.${symbol}`){let d=Array.isArray(m.data)?m.data[0]:m.data;if(d.lastPrice)c.price=+d.lastPrice;if(d.price24hPcnt)c.change=+d.price24hPcnt*100;if(d.turnover24h)c.volume=+d.turnover24h;updateLiveFields()}
+  if(m.topic&&m.topic.startsWith("kline.")){const interval=m.topic.split(".")[1];if(!TFS.includes(interval))return;for(const d of m.data){let bar={time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume};const key=c.key+"|"+interval,old=cache.get(key);let arr=old?.data||[];const idx=arr.findIndex(x=>x.time===bar.time);if(idx>=0)arr[idx]=bar;else{arr.push(bar);arr.sort((a,b)=>a.time-b.time);if(arr.length>120)arr=arr.slice(-120)}cache.set(key,{data:arr,at:Date.now()});c.rsi[interval]=rsi(arr);updateSelected();renderSummary();if(filterValue("rsiFilter")!=="all"&&filterValue("filterTf")===interval)renderHeatmap();}}
+ };
+ sock.onclose=()=>{if(ws===sock){$("connection").textContent="● RECONNECTING";setTimeout(()=>{if(selected===c.key)connectSelectedSocket()},2500)}};
+}
+async function selectCoin(key){if(!coinMap.has(key))return;selected=key;renderHeatmap();updateSelected();connectSelectedSocket()}
 // Coin selection is handled by the chart overlay below.
 // Heatmap tile selection is handled by the chart overlay below.
 $("search").addEventListener("input",renderHeatmap);
@@ -147,15 +192,48 @@ document.querySelectorAll(".custom-select").forEach(wrap=>{
 });
 document.addEventListener("click",()=>document.querySelectorAll(".custom-select.open").forEach(x=>{x.classList.remove("open");x.querySelector(".custom-select-btn").setAttribute("aria-expanded","false")}));
 document.addEventListener("keydown",e=>{if(e.key==="Escape")document.querySelectorAll(".custom-select.open").forEach(x=>{x.classList.remove("open");x.querySelector(".custom-select-btn").setAttribute("aria-expanded","false")})});
-async function loadMarkets(){try{const result=await api("/v5/market/tickers?category=linear");coins=result.list.filter(x=>x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:{"1":null,"5":null,"15":null,"30":null,"60":null}}));coins.sort((a,b)=>b.volume-a.volume);const restored=restoreRsiCache();coinMap=new Map(coins.map(c=>[c.symbol,c]));if(!coinMap.has(selected))selected=coins[0]?.symbol||"BTCUSDT";$("marketCount").textContent=coins.length;$("connection").textContent="● API CONNECTED";if(restored){$("scanStatus").textContent="Cached RSI ready";$("scanProgress").textContent=`Instantly loaded ${restored.toLocaleString()} cached RSI values`;}renderHeatmap();renderSummary();updateSelected();connectSelectedSocket();scanAll()}catch(e){$("connection").textContent="● API ERROR";$("scanStatus").textContent=e.message;$("heatBody").innerHTML=`<div style="padding:20px;color:#ff5360">Bybit API connection failed: ${e.message}</div>`}}
-async function refreshTickers(){try{let r=await api("/v5/market/tickers?category=linear");for(let d of r.list){let c=coinMap.get(d.symbol);if(c){c.price=+d.lastPrice;c.change=+d.price24hPcnt*100;c.volume=+d.turnover24h}}updateLiveFields();$("lastUpdate").textContent=new Date().toLocaleTimeString()}catch(e){console.warn("Ticker refresh",e)}}
+async function loadMarkets(){
+ try{
+  const [bybitResult,binanceInfo,binanceResponse]=await Promise.all([
+   api("/v5/market/tickers?category=linear"),
+   fetch(`${BINANCE_API}/fapi/v1/exchangeInfo`,{cache:"no-store"}).then(r=>{if(!r.ok)throw Error("Binance exchangeInfo HTTP "+r.status);return r.json()}),
+   fetch(`${BINANCE_API}/fapi/v1/ticker/24hr`,{cache:"no-store"}).then(r=>{if(!r.ok)throw Error("Binance ticker HTTP "+r.status);return r.json()})
+  ]);
+  const bybitCoins=bybitResult.list.filter(x=>x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({key:"BYBIT:"+x.symbol,exchange:"BYBIT",symbol:x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:{"1":null,"5":null,"15":null,"30":null,"60":null}}));
+  const perpetualUsdt=new Set((binanceInfo.symbols||[]).filter(x=>x.status==="TRADING"&&x.contractType==="PERPETUAL"&&x.quoteAsset==="USDT").map(x=>x.symbol));
+  const binanceCoins=binanceResponse.filter(x=>perpetualUsdt.has(x.symbol)&&x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({key:"BINANCE:"+x.symbol,exchange:"BINANCE",symbol:x.symbol,price:+x.lastPrice,change:+x.priceChangePercent,volume:+x.quoteVolume,rsi:{"1":null,"5":null,"15":null,"30":null,"60":null}}));
+  coins=[...bybitCoins,...binanceCoins].sort((a,b)=>b.volume-a.volume);
+  const restored=restoreRsiCache();coinMap=new Map(coins.map(c=>[c.key,c]));
+  if(!coinMap.has(selected))selected=coinMap.has("BYBIT:BTCUSDT")?"BYBIT:BTCUSDT":coins[0]?.key||"";
+  $("marketCount").textContent=coins.length;$("connection").textContent="● BOTH EXCHANGES CONNECTED";
+  if(restored){$("scanStatus").textContent="Cached RSI ready";$("scanProgress").textContent=`Instantly loaded ${restored.toLocaleString()} cached RSI values`;}
+  renderHeatmap();renderSummary();updateSelected();connectSelectedSocket();scanAll();
+ }catch(e){
+  $("connection").textContent="● API ERROR";$("scanStatus").textContent=e.message;
+  $("heatBody").innerHTML=`<div style="padding:20px;color:#ff5360">Market API connection failed: ${e.message}</div>`;
+ }
+}
+async function refreshTickers(){
+ try{
+  const [bybit,binance]=await Promise.all([
+   api("/v5/market/tickers?category=linear"),
+   fetch(`${BINANCE_API}/fapi/v1/ticker/24hr`,{cache:"no-store"}).then(r=>{if(!r.ok)throw Error("Binance HTTP "+r.status);return r.json()})
+  ]);
+  for(const d of bybit.list){const c=coinMap.get("BYBIT:"+d.symbol);if(c){c.price=+d.lastPrice;c.change=+d.price24hPcnt*100;c.volume=+d.turnover24h}}
+  for(const d of binance){const c=coinMap.get("BINANCE:"+d.symbol);if(c){c.price=+d.lastPrice;c.change=+d.priceChangePercent;c.volume=+d.quoteVolume}}
+  updateLiveFields();$("lastUpdate").textContent=new Date().toLocaleTimeString();
+ }catch(e){console.warn("Ticker refresh",e)}
+}
 setInterval(refreshTickers,3000);setInterval(()=>{if(!scanBusy)scanAll()},300000);loadMarkets();
 </script>
 
 <script>
 (function(){
- function openCoinChart(symbol){
-  if(!symbol || !/^[A-Z0-9]+USDT$/.test(symbol)) return;
+ function openCoinChart(key){
+  if(!key) return;
+  const parts=key.split(":");if(parts.length!==2)return;
+  const exchange=parts[0],symbol=parts[1];
+  if(!/^[A-Z0-9]+USDT$/.test(symbol)) return;
   const chartUrl="Coin_Chart_Panel_Simple_Chart.html?symbol="+encodeURIComponent(symbol);
   window.open(chartUrl,"_blank","noopener");
  }
