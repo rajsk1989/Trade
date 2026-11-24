@@ -61,7 +61,7 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
 </head>
 <body>
 <header>
- <div class="logo">BYBIT <span>SCANNER PRO</span></div>
+ <div class="logo">BYBIT + BINANCE <span>SCANNER PRO</span></div>
  <div class="status">● <span id="connection">CONNECTING</span></div>
 </header>
 <div class="layout">
@@ -91,7 +91,7 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
  <div class="market-info">
   <div class="coin-title"><span class="market-name" id="selectedName">BTCUSDT</span><span class="price" id="selectedPrice">Loading...</span></div>
   <span id="selectedChange" hidden></span><span id="selectedRSI" hidden></span><span class="live-volume">LIVE VOL <strong id="selectedVolume">--</strong></span>
-  <span id="selectedRSILabel" hidden></span><span id="historyStatus" hidden></span><span id="barCountdown" hidden></span>
+  <span id="selectedRSILabel" hidden></span><span id="historyStatus" hidden></span><span id="barCountdown"></span>
   <span id="connection" hidden>CONNECTING</span>
  </div>
  <div class="toolbar">
@@ -114,6 +114,10 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
 "use strict";
 const API="https://api.bybit.com";
 const WS="wss://stream.bybit.com/v5/public/linear";
+const BINANCE_API="https://fapi.binance.com";
+const BINANCE_WS="wss://fstream.binance.com/stream?streams=";
+function splitSymbol(key){const i=key.indexOf(":");return i<0?{exchange:"BYBIT",symbol:key}:{exchange:key.slice(0,i),symbol:key.slice(i+1)};}
+function apiInterval(interval){const map={"1":"1m","3":"3m","5":"5m","15":"15m","30":"30m","60":"1h","120":"2h","240":"4h","360":"6h","720":"12h","D":"1d","W":"1w"};return map[interval]||"30m";}
 const $=id=>document.getElementById(id);
 function updateBrowserTabTitle(){
  const name=$("selectedName")?.textContent?.trim()||"Coin";
@@ -125,7 +129,7 @@ try{savedChartState=JSON.parse(localStorage.getItem("bybitScannerChartState")||"
 const chartViews=(savedChartState.views&&typeof savedChartState.views==="object")?savedChartState.views:{};
 const viewKey=(symbol,interval)=>symbol+"|"+interval;
 const requestedSymbol=new URLSearchParams(location.search).get("symbol");
-let coins=[],coinMap=new Map(),selected=(requestedSymbol&&/^[A-Z0-9]+USDT$/.test(requestedSymbol)?requestedSymbol:(typeof savedChartState.symbol==="string"?savedChartState.symbol:"BTCUSDT")),tf=(typeof savedChartState.tf==="string"?savedChartState.tf:"30"),candles=[],socket=null,reconnectTimer=null;
+let coins=[],coinMap=new Map(),selected=(requestedSymbol&&/^[A-Z0-9]+USDT$/.test(requestedSymbol)?"BYBIT:"+requestedSymbol:(typeof savedChartState.symbol==="string"?(savedChartState.symbol.includes(":")?savedChartState.symbol:"BYBIT:"+savedChartState.symbol):"BYBIT:BTCUSDT")),tf=(typeof savedChartState.tf==="string"?savedChartState.tf:"30"),candles=[],socket=null,reconnectTimer=null;
 let pendingVisibleRange=savedChartState.visibleRange&&Number.isFinite(savedChartState.visibleRange.from)&&Number.isFinite(savedChartState.visibleRange.to)?savedChartState.visibleRange:null;
 let requestId=0,scannerBusy=false,scanAgain=false,scannerDone=false,rows=new Map(),filterTimer=null,filterScheduled=false;
 let historyBusy=false,historyToken=0;
@@ -355,6 +359,8 @@ async function getJSON(path){
  if(j.retCode!==0)throw Error(j.retMsg||"Bybit API error "+j.retCode);
  return j.result;
 }
+async function getBinanceJSON(path){const res=await fetch(BINANCE_API+path,{cache:"no-store"});if(!res.ok)throw Error("Binance HTTP "+res.status);return res.json();}
+
 function fmt(v){return Number(v||0).toLocaleString("en-US",{maximumFractionDigits:8});}
 function volumeFmt(v){if(v>=1e9)return(v/1e9).toFixed(2)+"B";if(v>=1e6)return(v/1e6).toFixed(2)+"M";if(v>=1e3)return(v/1e3).toFixed(2)+"K";return Number(v||0).toFixed(2);}
 function calcRSI(data,p=14){
@@ -372,11 +378,15 @@ function rsiArray(data,p=14){
  return out;
 }
 function mapKlines(list){return list.map(c=>({time:Math.floor(Number(c[0])/1000),open:+c[1],high:+c[2],low:+c[3],close:+c[4],volume:+c[5]})).sort((a,b)=>a.time-b.time);}
-async function fetchKlinePage(symbol,interval,end,limit=1000){
+async function fetchKlinePage(key,interval,end,limit=1000){
+ const {exchange,symbol}=splitSymbol(key);
+ if(exchange==="BINANCE"){const q=new URLSearchParams({symbol,interval:apiInterval(interval),limit:String(limit),endTime:String(end)});return {list:await getBinanceJSON("/fapi/v1/klines?"+q.toString())};}
  const q=new URLSearchParams({category:"linear",symbol,interval,limit:String(limit),end:String(end)});
  return getJSON("/v5/market/kline?"+q.toString());
 }
-async function getRecentKlines(symbol,interval){
+async function getRecentKlines(key,interval){
+ const {exchange,symbol}=splitSymbol(key);
+ if(exchange==="BINANCE"){const q=new URLSearchParams({symbol,interval:apiInterval(interval),limit:"1000"});return mapKlines(await getBinanceJSON("/fapi/v1/klines?"+q.toString())||[]);}
  const r=await getJSON("/v5/market/kline?category=linear&symbol="+encodeURIComponent(symbol)+"&interval="+encodeURIComponent(interval)+"&limit=1000");
  return mapKlines(r.list||[]);
 }
@@ -477,7 +487,7 @@ function timeframeLabel(value=tf){
 function updateInfo(){
  const coin=coinMap.get(selected);if(!coin)return;
  $("selectedRSILabel").textContent=timeframeLabel()+" RSI";
- $("selectedName").textContent=selected;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();
+ $("selectedName").textContent=selected.replace(":"," · ");$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();
  $("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";
  const r=calcRSI(candles);$("selectedRSI").textContent=r===null?"--":r.toFixed(2);
  if(Number.isFinite(r)){coin.rsi=r;updateCoinRow(coin);if($("rsiFilter").value!=="all")scheduleFilter();}
@@ -495,60 +505,38 @@ function closeSocket(){
  clearTimeout(reconnectTimer);
  if(socket){const old=socket;socket=null;old.onopen=null;old.onmessage=null;old.onclose=null;old.close();}
 }
-function connectSocket(symbol=selected, interval=tf){
+function connectSocket(key=selected, interval=tf){
  closeSocket();
- const ws=new WebSocket(WS);socket=ws;
- ws.onopen=()=>{
-  if(socket!==ws||selected!==symbol||tf!==interval)return;
-  $("connection").textContent="LIVE";
-  ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));
- };
+ const {exchange,symbol}=splitSymbol(key);
+ const ws=exchange==="BINANCE"?new WebSocket(BINANCE_WS+symbol.toLowerCase()+"@ticker/"+symbol.toLowerCase()+"@kline_"+apiInterval(interval)):new WebSocket(WS);
+ socket=ws;
+ ws.onopen=()=>{if(socket!==ws||selected!==key||tf!==interval)return;$("connection").textContent="LIVE";if(exchange==="BYBIT")ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));};
  ws.onmessage=event=>{
-  if(socket!==ws||selected!==symbol||tf!==interval)return;
+  if(socket!==ws||selected!==key||tf!==interval)return;
   let msg;try{msg=JSON.parse(event.data);}catch(e){return;}
+  if(exchange==="BINANCE"){
+   const d=msg.data||msg;
+   if(d.e==="24hrTicker"){const coin=coinMap.get(key);if(!coin)return;coin.price=+d.c;coin.change=+d.P;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";updateCoinRow(coin);}
+   if(d.e==="kline"&&d.k){const k=d.k;updateLiveCandle({time:Math.floor(+k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v},key);}
+   return;
+  }
   if(!msg.data)return;
-  if(msg.topic==="tickers."+symbol){
-   const d=Array.isArray(msg.data)?msg.data[0]:msg.data,coin=coinMap.get(symbol);if(!coin)return;
-   if(d.lastPrice!==undefined)coin.price=+d.lastPrice;
-   if(d.price24hPcnt!==undefined)coin.change=+d.price24hPcnt*100;
-   $("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();
-   $("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";
-   updateCoinRow(coin);
-  }
-  if(msg.topic==="kline."+interval+"."+symbol){
-   const arr=Array.isArray(msg.data)?msg.data:[msg.data];
-   for(const d of arr){
-    const c={time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume};
-    const lastIndex=candles.length-1,lastCandle=candles[lastIndex];
-    if(lastCandle&&lastCandle.time===c.time){
-     candles[lastIndex]=c;
-    }else if(!lastCandle||c.time>lastCandle.time){
-     candles.push(c);
-    }else{
-     // Rare out-of-order update: correct the historical point without sorting
-     // the full array on every normal live-candle tick.
-     const i=candles.findIndex(x=>x.time===c.time);
-     if(i>=0)candles[i]=c;else candles.push(c);
-     candles.sort((x,y)=>x.time-y.time);
-     candleSeries.setData(candles);
-     volumeSeries.setData(candles.map(x=>({time:x.time,value:x.volume,color:x.close>=x.open?"#FFFFFF":"#000000"})));
-    }
-    chartCache.set(symbol+"|"+interval,candles.slice());
-    if(!lastCandle||c.time>=lastCandle.time){
-     candleSeries.update(c);
-     volumeSeries.update({time:c.time,value:c.volume,color:c.close>=c.open?"#FFFFFF":"#000000"});
-    }
-    scheduleLivePaint();
-   }
-  }
+  if(msg.topic==="tickers."+symbol){const d=Array.isArray(msg.data)?msg.data[0]:msg.data,coin=coinMap.get(key);if(!coin)return;if(d.lastPrice!==undefined)coin.price=+d.lastPrice;if(d.price24hPcnt!==undefined)coin.change=+d.price24hPcnt*100;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";updateCoinRow(coin);}
+  if(msg.topic==="kline."+interval+"."+symbol){const arr=Array.isArray(msg.data)?msg.data:[msg.data];for(const d of arr)updateLiveCandle({time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume},key);}
  };
  ws.onerror=()=>{if(socket===ws)$("connection").textContent="WS ERROR";};
- ws.onclose=()=>{
-  if(socket!==ws)return;
-  $("connection").textContent="RECONNECTING";
-  reconnectTimer=setTimeout(()=>{if(socket===ws&&selected===symbol&&tf===interval)connectSocket(symbol,interval);},2000);
- };
+ ws.onclose=()=>{if(socket!==ws)return;$("connection").textContent="RECONNECTING";reconnectTimer=setTimeout(()=>{if(socket===ws&&selected===key&&tf===interval)connectSocket(key,interval);},2000);};
 }
+function updateLiveCandle(c,key){
+ const lastIndex=candles.length-1,lastCandle=candles[lastIndex];
+ if(lastCandle&&lastCandle.time===c.time)candles[lastIndex]=c;
+ else if(!lastCandle||c.time>lastCandle.time)candles.push(c);
+ else{const i=candles.findIndex(x=>x.time===c.time);if(i>=0)candles[i]=c;else candles.push(c);candles.sort((x,y)=>x.time-y.time);candleSeries.setData(candles);volumeSeries.setData(candles.map(x=>({time:x.time,value:x.volume,color:x.close>=x.open?"#FFFFFF":"#000000"})));}
+ chartCache.set(key+"|"+tf,candles.slice());
+ if(!lastCandle||c.time>=lastCandle.time){candleSeries.update(c);volumeSeries.update({time:c.time,value:c.volume,color:c.close>=c.open?"#FFFFFF":"#000000"});}
+ scheduleLivePaint();
+}
+
 function scheduleFilter(){
  if(filterScheduled)return;
  filterScheduled=true;
@@ -674,20 +662,21 @@ function updateBarCountdown(){
 setInterval(updateBarCountdown,1000);
 async function loadMarket(){
  try{
-  const result=await getJSON("/v5/market/tickers?category=linear");
-  coins=result.list.filter(x=>x.symbol.endsWith("USDT")).map(x=>({symbol:x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
-  coinMap=new Map(coins.map(c=>[c.symbol,c]));
-  if(!coinMap.has(selected))selected="BTCUSDT";
+  const [bybitResult,binanceResult]=await Promise.all([getJSON("/v5/market/tickers?category=linear"),getBinanceJSON("/fapi/v1/ticker/24hr")]);
+  const bybitCoins=(bybitResult.list||[]).filter(x=>x.symbol.endsWith("USDT")).map(x=>({symbol:"BYBIT:"+x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
+  const binanceCoins=(binanceResult||[]).filter(x=>x.symbol.endsWith("USDT")&&!x.symbol.includes("_")).map(x=>({symbol:"BINANCE:"+x.symbol,price:+x.lastPrice,change:+x.priceChangePercent,volume:+x.quoteVolume,rsi:null}));
+  coins=[...bybitCoins,...binanceCoins];coinMap=new Map(coins.map(c=>[c.symbol,c]));
+  if(!coinMap.has(selected))selected="BYBIT:BTCUSDT";
   if(!intervalMs[tf])tf="30";
   document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===tf));
-  $("connection").textContent="LIVE";buildList();
-  await selectCoin(selected);runScanner();
- }catch(e){console.error(e);$("connection").textContent="API ERROR";$("coinList").innerHTML='<div class="empty">Bybit connection failed. Check internet / refresh page.</div>';}
+  $("connection").textContent="LIVE";buildList();await selectCoin(selected);runScanner();
+ }catch(e){console.error(e);$("connection").textContent="API ERROR";$("coinList").innerHTML='<div class="empty">Market connection failed. Check internet / refresh page.</div>';}
 }
 async function refreshTickers(){
  try{
-  const result=await getJSON("/v5/market/tickers?category=linear");
-  result.list.forEach(d=>{const c=coinMap.get(d.symbol);if(!c)return;c.price=+d.lastPrice;c.change=+d.price24hPcnt*100;c.volume=+d.turnover24h;updateCoinRow(c);});
+  const [bybitResult,binanceResult]=await Promise.all([getJSON("/v5/market/tickers?category=linear"),getBinanceJSON("/fapi/v1/ticker/24hr")]);
+  (bybitResult.list||[]).forEach(d=>{const c=coinMap.get("BYBIT:"+d.symbol);if(!c)return;c.price=+d.lastPrice;c.change=+d.price24hPcnt*100;c.volume=+d.turnover24h;updateCoinRow(c);});
+  (binanceResult||[]).forEach(d=>{const c=coinMap.get("BINANCE:"+d.symbol);if(!c)return;c.price=+d.lastPrice;c.change=+d.priceChangePercent;c.volume=+d.quoteVolume;updateCoinRow(c);});
   const coin=coinMap.get(selected);if(coin){$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";}
  }catch(e){console.warn(e);}
 }
