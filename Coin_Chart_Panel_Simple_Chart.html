@@ -114,7 +114,7 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
 "use strict";
 const BYBIT_API_HOSTS=["https://api.bybit.com","https://api.bytick.com"];
 const WS="wss://stream.bybit.com/v5/public/linear";
-const BINANCE_API="https://fapi.binance.com";
+const BINANCE_API_HOSTS=["https://fapi.binance.com","https://fapi1.binance.com","https://fapi2.binance.com","https://fapi3.binance.com"];
 const BINANCE_WS="wss://fstream.binance.com/stream?streams=";
 function splitSymbol(key){const i=key.indexOf(":");return i<0?{exchange:"BYBIT",symbol:key}:{exchange:key.slice(0,i),symbol:key.slice(i+1)};}
 function exchangeNameForKey(key){return splitSymbol(key).exchange;}
@@ -375,7 +375,47 @@ async function getJSON(path){
  }
  throw Error("Bybit API failed on both official hosts. "+(lastError?.message||"Network/CORS error"));
 }
-async function getBinanceJSON(path){const res=await fetch(BINANCE_API+path,{cache:"no-store"});if(!res.ok)throw Error("Binance HTTP "+res.status);return res.json();}
+async function getBinanceJSON(path){
+ let lastError=null;
+ for(const host of BINANCE_API_HOSTS){
+  try{
+   const res=await fetch(host+path,{cache:"no-store",mode:"cors"});
+   const raw=await res.text();
+   let data;try{data=JSON.parse(raw);}catch(e){data=null;}
+   if(!res.ok){
+    const message=data?.msg||data?.message||raw.slice(0,180)||res.statusText;
+    const err=new Error("Binance HTTP "+res.status+": "+message);
+    err.status=res.status;
+    err.retryAfter=Number(res.headers.get("Retry-After")||0);
+    // A rate limit is IP-wide: do not hammer other Binance hosts.
+    if(res.status===429||res.status===418)throw err;
+    lastError=err;continue;
+   }
+   if(data&&typeof data==="object"&&!Array.isArray(data)&&data.code!==undefined&&data.code<0){
+    throw new Error("Binance API "+data.code+": "+(data.msg||"request failed"));
+   }
+   if(data===null)throw new Error("Binance returned invalid JSON from "+host);
+   return data;
+  }catch(err){
+   lastError=err;
+   if(err.status===429||err.status===418){
+    const wait=Math.min(Math.max(err.retryAfter||3,3),30);
+    console.warn("Binance rate limit; waiting",wait,"seconds",err);
+    await new Promise(resolve=>setTimeout(resolve,wait*1000));
+    // Retry the same endpoint once after the server's cooldown.
+    try{
+     const retry=await fetch(host+path,{cache:"no-store",mode:"cors"});
+     const body=await retry.text();let value;try{value=JSON.parse(body);}catch(e){value=null;}
+     if(retry.ok&&value!==null)return value;
+     lastError=new Error("Binance retry HTTP "+retry.status+": "+(value?.msg||body.slice(0,160)));
+    }catch(retryError){lastError=retryError;}
+    break;
+   }
+   console.warn("Binance REST host failed:",host,err);
+  }
+ }
+ throw new Error("Binance Futures API failed on all available hosts. "+(lastError?.message||"Network/CORS error"));
+}
 
 function fmt(v){return Number(v||0).toLocaleString("en-US",{maximumFractionDigits:8});}
 function volumeFmt(v){if(v>=1e9)return(v/1e9).toFixed(2)+"B";if(v>=1e6)return(v/1e6).toFixed(2)+"M";if(v>=1e3)return(v/1e3).toFixed(2)+"K";return Number(v||0).toFixed(2);}
@@ -400,10 +440,10 @@ async function fetchKlinePage(key,interval,end,limit=1000){
  const q=new URLSearchParams({category:"linear",symbol,interval,limit:String(limit),end:String(end)});
  return getJSON("/v5/market/kline?"+q.toString());
 }
-async function getRecentKlines(key,interval){
+async function getRecentKlines(key,interval,limit=1000){
  const {exchange,symbol}=splitSymbol(key);
- if(exchange==="BINANCE"){const q=new URLSearchParams({symbol,interval:apiInterval(interval),limit:"1000"});return mapKlines(await getBinanceJSON("/fapi/v1/klines?"+q.toString())||[]);}
- const r=await getJSON("/v5/market/kline?category=linear&symbol="+encodeURIComponent(symbol)+"&interval="+encodeURIComponent(interval)+"&limit=1000");
+ if(exchange==="BINANCE"){const q=new URLSearchParams({symbol,interval:apiInterval(interval),limit:String(limit)});return mapKlines(await getBinanceJSON("/fapi/v1/klines?"+q.toString())||[]);}
+ const r=await getJSON("/v5/market/kline?category=linear&symbol="+encodeURIComponent(symbol)+"&interval="+encodeURIComponent(interval)+"&limit="+encodeURIComponent(String(limit)));
  return mapKlines(r.list||[]);
 }
 function twoMonthsAgo(){const d=new Date();d.setUTCMonth(d.getUTCMonth()-2);return Math.floor(d.getTime()/1000);}
@@ -432,7 +472,7 @@ async function loadOlderHistory(symbol,interval,token){
    const nextEnd=oldest*1000-1;
    if(nextEnd>=end)break;
    end=nextEnd;
-   await new Promise(r=>setTimeout(r,100));
+   await new Promise(r=>setTimeout(r,350));
   }
   if(token!==historyToken||symbol!==selected||interval!==tf)return;
   if(allOld.length){
@@ -652,16 +692,16 @@ async function runScanner(){
   while(cursor<total){
    const coin=queue[cursor++];
    try{
-    const data=await getRecentKlines(coin.symbol,scanInterval);
+    const data=await getRecentKlines(coin.symbol,scanInterval,100);
     // For the selected coin, use the exact chart candle series (including its live candle).
     coin.rsi=coin.symbol===selected&&tf===scanInterval&&candles.length?calcRSI(candles):calcRSI(data);
     updateCoinRow(coin);
    }catch(e){if(coin.symbol!==selected)coin.rsi=null;}
    done++;if(done%10===0||done===total){$("rsiCount").textContent="RSI "+done+"/"+total;scheduleFilter();}
-   await new Promise(r=>setTimeout(r,180));
+   await new Promise(r=>setTimeout(r,300));
   }
  }
- try{await Promise.all([worker(),worker(),worker(),worker()]);scannerDone=true;buildList();}
+ try{await Promise.all([worker(),worker()]);scannerDone=true;buildList();}
  finally{scannerBusy=false;if(scanAgain){scanAgain=false;runScanner();}}
 }
 function updateBarCountdown(){
