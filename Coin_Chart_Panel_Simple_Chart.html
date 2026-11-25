@@ -112,7 +112,7 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
 <div id="chartContextMenu" role="menu" aria-label="Chart actions"><button id="refreshChartAction" type="button" role="menuitem">↻ Refresh Chart</button></div>
 <script>
 "use strict";
-const API="https://api.bybit.com";
+const BYBIT_API_HOSTS=["https://api.bybit.com","https://api.bytick.com"];
 const WS="wss://stream.bybit.com/v5/public/linear";
 const BINANCE_API="https://fapi.binance.com";
 const BINANCE_WS="wss://fstream.binance.com/stream?streams=";
@@ -361,11 +361,19 @@ attachResizer("priceResize","pricePanel","volumePanel",55);
 attachResizer("rsiResize","volumePanel","rsiPanel",55);
 
 async function getJSON(path){
- const res=await fetch(API+path,{cache:"no-store"});
- if(!res.ok)throw Error("HTTP "+res.status);
- const j=await res.json();
- if(j.retCode!==0)throw Error(j.retMsg||"Bybit API error "+j.retCode);
- return j.result;
+ let lastError=null;
+ // Bybit officially supports both api.bybit.com and api.bytick.com.
+ // Try the alternate host when the first host is blocked/unreachable.
+ for(const host of BYBIT_API_HOSTS){
+  try{
+   const res=await fetch(host+path,{cache:"no-store",mode:"cors"});
+   if(!res.ok)throw Error("HTTP "+res.status+" from "+host);
+   const j=await res.json();
+   if(j.retCode!==0)throw Error((j.retMsg||"Bybit API error "+j.retCode)+" from "+host);
+   return j.result;
+  }catch(err){lastError=err;console.warn("Bybit REST host failed:",host,err);}
+ }
+ throw Error("Bybit API failed on both official hosts. "+(lastError?.message||"Network/CORS error"));
 }
 async function getBinanceJSON(path){const res=await fetch(BINANCE_API+path,{cache:"no-store"});if(!res.ok)throw Error("Binance HTTP "+res.status);return res.json();}
 
