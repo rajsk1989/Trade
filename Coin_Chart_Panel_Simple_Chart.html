@@ -557,16 +557,32 @@ function closeSocket(){
 function connectSocket(key=selected, interval=tf){
  closeSocket();
  const {exchange,symbol}=splitSymbol(key);
- const ws=exchange==="BINANCE"?new WebSocket(BINANCE_WS+symbol.toLowerCase()+"@ticker/"+symbol.toLowerCase()+"@kline_"+apiInterval(interval)):new WebSocket(WS);
+ let ws;
+ try{
+  ws=exchange==="BINANCE"?new WebSocket(BINANCE_WS+symbol.toLowerCase()+"@ticker/"+symbol.toLowerCase()+"@kline_"+apiInterval(interval)):new WebSocket(WS);
+ }catch(err){
+  console.error("WebSocket creation failed:",err);
+  $("connection").textContent="WS ERROR";
+  reconnectTimer=setTimeout(()=>{if(selected===key&&tf===interval)connectSocket(key,interval);},3000);
+  return;
+ }
  socket=ws;
- ws.onopen=()=>{if(socket!==ws||selected!==key||tf!==interval)return;$("connection").textContent="LIVE";if(exchange==="BYBIT")ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));};
+ ws.onopen=()=>{if(socket!==ws||selected!==key||tf!==interval)return;$("connection").textContent="LIVE";if(exchange==="BYBIT")ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));else $("historyStatus").textContent="Binance WebSocket connected · receiving live market data";};
  ws.onmessage=event=>{
   if(socket!==ws||selected!==key||tf!==interval)return;
   let msg;try{msg=JSON.parse(event.data);}catch(e){return;}
   if(exchange==="BINANCE"){
    const d=msg.data||msg;
-   if(d.e==="24hrTicker"){const coin=coinMap.get(key);if(!coin)return;coin.price=+d.c;coin.change=+d.P;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";updateCoinRow(coin);}
-   if(d.e==="kline"&&d.k){const k=d.k;updateLiveCandle({time:Math.floor(+k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v},key);}
+   if(d.e==="24hrTicker"){
+    const coin=coinMap.get(key);
+    if(coin){coin.price=+d.c;coin.change=+d.P;coin.volume=+d.q||coin.volume;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";updateCoinRow(coin);}
+   }
+   if(d.e==="kline"&&d.k){
+    const k=d.k,candle={time:Math.floor(+k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
+    updateLiveCandle(candle,key);
+    const coin=coinMap.get(key);if(coin){coin.price=candle.close;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();}
+    $("historyStatus").textContent="Binance WebSocket live · "+candles.length+" candles collected";
+   }
    return;
   }
   if(!msg.data)return;
@@ -582,7 +598,13 @@ function updateLiveCandle(c,key){
  else if(!lastCandle||c.time>lastCandle.time)candles.push(c);
  else{const i=candles.findIndex(x=>x.time===c.time);if(i>=0)candles[i]=c;else candles.push(c);candles.sort((x,y)=>x.time-y.time);candleSeries.setData(candles);volumeSeries.setData(candles.map(x=>({time:x.time,value:x.volume,color:x.close>=x.open?"#FFFFFF":"#000000"})));}
  chartCache.set(key+"|"+tf,candles.slice());
- if(!lastCandle||c.time>=lastCandle.time){candleSeries.update(c);volumeSeries.update({time:c.time,value:c.volume,color:c.close>=c.open?"#FFFFFF":"#000000"});}
+ if(!lastCandle){
+  candleSeries.setData([c]);
+  volumeSeries.setData([{time:c.time,value:c.volume,color:c.close>=c.open?"#FFFFFF":"#000000"}]);
+ }else if(c.time>=lastCandle.time){
+  candleSeries.update(c);
+  volumeSeries.update({time:c.time,value:c.volume,color:c.close>=c.open?"#FFFFFF":"#000000"});
+ }
  scheduleLivePaint();
 }
 
@@ -625,6 +647,16 @@ async function selectCoin(symbol,rangeAlreadySaved=false,forceFit=false){
  updateBarCountdown();
 
  try{
+  // Binance REST may be blocked. Open the live WebSocket chart without waiting
+  // for REST history; incoming kline messages bootstrap the first candle.
+  if(splitSymbol(symbol).exchange==="BINANCE"){
+   const coin=coinMap.get(symbol);
+   if(coin&&Number.isFinite(coin.price)&&coin.price>0)$("selectedPrice").textContent="$"+fmt(coin.price);
+   $("historyStatus").textContent="Connecting to Binance WebSocket · waiting for live candle...";
+   $("connection").textContent="CONNECTING WS";
+   connectSocket(symbol,tf);
+   return;
+  }
   const data=await getRecentKlines(symbol,tf);
   if(id!==requestId||symbol!==selected)return;
   if(!data.length)throw Error(exchangeNameForKey(symbol)+" returned no candle data");
@@ -734,6 +766,11 @@ async function loadMarket(){
   const perpetualUsdt=new Set((binanceInfo.symbols||[]).filter(x=>x.status==="TRADING"&&x.contractType==="PERPETUAL"&&x.quoteAsset==="USDT").map(x=>x.symbol));
   const binanceCoins=[...perpetualUsdt].filter(symbol=>symbol.endsWith("USDT")&&symbol.length>4).map(symbol=>({symbol:"BINANCE:"+symbol,price:0,change:0,volume:0,rsi:null}));
   coins.push(...binanceCoins);
+ }else if(bybitResult){
+  // Discovery fallback: common USDT pairs remain selectable when Binance
+  // exchangeInfo is blocked; the selected Binance stream supplies live data.
+  const candidates=(bybitResult.list||[]).filter(x=>x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BINANCE:"+x.symbol,price:0,change:0,volume:0,rsi:null}));
+  coins.push(...candidates);
  }
  coinMap=new Map(coins.map(c=>[c.symbol,c]));
  // The symbol comes from the heatmap URL. Add it even if ticker discovery
