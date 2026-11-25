@@ -95,6 +95,7 @@ button{cursor:pointer}button.active{background:#eee;color:#000}
   <span id="connection" hidden>CONNECTING</span>
  </div>
  <div class="toolbar">
+  <button type="button" id="bybitExchange" class="active">BYBIT</button><button type="button" id="binanceExchange">BINANCE</button>
   <button data-tf="1">1m</button><button data-tf="5">5m</button><button data-tf="15">15m</button>
   <button class="active" data-tf="30">30m</button><button data-tf="60">1H</button>
   <button data-tf="240">4H</button><button data-tf="D">1D</button><button data-tf="W">1W</button>
@@ -712,6 +713,20 @@ async function changeTF(value){
  runScanner();
 }
 document.querySelectorAll("[data-tf]").forEach(b=>b.addEventListener("click",()=>changeTF(b.dataset.tf)));
+function switchExchange(exchange){
+ const current=splitSymbol(selected).symbol;
+ const key=exchange+":"+current;
+ if(!coinMap.has(key)){
+  const item={symbol:key,price:0,change:0,volume:0,rsi:null};
+  coins.unshift(item);coinMap.set(key,item);
+ }
+ $("bybitExchange").classList.toggle("active",exchange==="BYBIT");
+ $("binanceExchange").classList.toggle("active",exchange==="BINANCE");
+ selectCoin(key);
+}
+$("bybitExchange").addEventListener("click",()=>switchExchange("BYBIT"));
+$("binanceExchange").addEventListener("click",()=>switchExchange("BINANCE"));
+
 async function runScanner(){
  if(scannerBusy){scanAgain=true;return;}scannerBusy=true;scannerDone=false;
  // Scan every coin using the timeframe currently selected in the chart.
@@ -784,6 +799,8 @@ async function loadMarket(){
  }
  if(!coinMap.has(selected))selected=coinMap.has("BYBIT:BTCUSDT")?"BYBIT:BTCUSDT":(coins[0]?.symbol||"");
  if(!intervalMs[tf])tf="30";
+ $("bybitExchange").classList.toggle("active",splitSymbol(selected).exchange==="BYBIT");
+ $("binanceExchange").classList.toggle("active",splitSymbol(selected).exchange==="BINANCE");
  document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===tf));
  $("connection").textContent=(bybitResult||binanceInfo)?"LIVE":"CANDLE MODE";
  buildList();
