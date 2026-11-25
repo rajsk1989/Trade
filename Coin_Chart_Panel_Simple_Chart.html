@@ -116,7 +116,7 @@ const API="https://api.bybit.com";
 const WS="wss://stream.bybit.com/v5/public/linear";
 const BINANCE_API="https://fapi.binance.com";
 const BINANCE_WS="wss://fstream.binance.com/stream?streams=";
-function splitSymbol(key){const i=key.indexOf(":");return i<0?{exchange:"BYBIT",symbol:key}:{exchange:key.slice(0,i),symbol:key.slice(i+1)};}
+function splitSymbol(key){const i=key.indexOf(":");return i<0?{exchange:"BYBIT",symbol:key}:{exchange:key.slice(0,i),symbol:key.slice(i+1)};}\nfunction exchangeNameForKey(key){return splitSymbol(key).exchange;}
 function apiInterval(interval){const map={"1":"1m","3":"3m","5":"5m","15":"15m","30":"30m","60":"1h","120":"2h","240":"4h","360":"6h","720":"12h","D":"1d","W":"1w"};return map[interval]||"30m";}
 const $=id=>document.getElementById(id);
 function updateBrowserTabTitle(){
@@ -129,7 +129,14 @@ try{savedChartState=JSON.parse(localStorage.getItem("bybitScannerChartState")||"
 const chartViews=(savedChartState.views&&typeof savedChartState.views==="object")?savedChartState.views:{};
 const viewKey=(symbol,interval)=>symbol+"|"+interval;
 const requestedSymbol=new URLSearchParams(location.search).get("symbol");
-let coins=[],coinMap=new Map(),selected=(requestedSymbol&&/^[A-Z0-9]+USDT$/.test(requestedSymbol)?"BYBIT:"+requestedSymbol:(typeof savedChartState.symbol==="string"?(savedChartState.symbol.includes(":")?savedChartState.symbol:"BYBIT:"+savedChartState.symbol):"BYBIT:BTCUSDT")),tf=(typeof savedChartState.tf==="string"?savedChartState.tf:"30"),candles=[],socket=null,reconnectTimer=null;
+function normalizeCoinKey(value){
+ if(typeof value!=="string")return "";
+ const v=value.trim().toUpperCase();
+ if(/^(BYBIT|BINANCE):[A-Z0-9]+USDT$/.test(v))return v;
+ if(/^[A-Z0-9]+USDT$/.test(v))return "BYBIT:"+v;
+ return "";
+}
+let coins=[],coinMap=new Map(),selected=normalizeCoinKey(requestedSymbol)||normalizeCoinKey(savedChartState.symbol)||"BYBIT:BTCUSDT",tf=(typeof savedChartState.tf==="string"?savedChartState.tf:"30"),candles=[],socket=null,reconnectTimer=null;
 let pendingVisibleRange=savedChartState.visibleRange&&Number.isFinite(savedChartState.visibleRange.from)&&Number.isFinite(savedChartState.visibleRange.to)?savedChartState.visibleRange:null;
 let requestId=0,scannerBusy=false,scanAgain=false,scannerDone=false,rows=new Map(),filterTimer=null,filterScheduled=false;
 let historyBusy=false,historyToken=0;
@@ -578,7 +585,7 @@ async function selectCoin(symbol,rangeAlreadySaved=false,forceFit=false){
  try{
   const data=await getRecentKlines(symbol,tf);
   if(id!==requestId||symbol!==selected)return;
-  if(!data.length)throw Error("Bybit returned no candle data");
+  if(!data.length)throw Error(exchangeNameForKey(symbol)+" returned no candle data");
 
   candles=data;
   chartCache.set(symbol+"|"+tf,data.slice());
@@ -662,11 +669,16 @@ function updateBarCountdown(){
 setInterval(updateBarCountdown,1000);
 async function loadMarket(){
  try{
-  const [bybitResult,binanceResult]=await Promise.all([getJSON("/v5/market/tickers?category=linear"),getBinanceJSON("/fapi/v1/ticker/24hr")]);
-  const bybitCoins=(bybitResult.list||[]).filter(x=>x.symbol.endsWith("USDT")).map(x=>({symbol:"BYBIT:"+x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
-  const binanceCoins=(binanceResult||[]).filter(x=>x.symbol.endsWith("USDT")&&!x.symbol.includes("_")).map(x=>({symbol:"BINANCE:"+x.symbol,price:+x.lastPrice,change:+x.priceChangePercent,volume:+x.quoteVolume,rsi:null}));
+  const [bybitResult,binanceResult,binanceInfo]=await Promise.all([
+   getJSON("/v5/market/tickers?category=linear"),
+   getBinanceJSON("/fapi/v1/ticker/24hr"),
+   getBinanceJSON("/fapi/v1/exchangeInfo")
+  ]);
+  const bybitCoins=(bybitResult.list||[]).filter(x=>x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BYBIT:"+x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
+  const perpetualUsdt=new Set((binanceInfo.symbols||[]).filter(x=>x.status==="TRADING"&&x.contractType==="PERPETUAL"&&x.quoteAsset==="USDT").map(x=>x.symbol));
+  const binanceCoins=(binanceResult||[]).filter(x=>perpetualUsdt.has(x.symbol)&&x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BINANCE:"+x.symbol,price:+x.lastPrice,change:+x.priceChangePercent,volume:+x.quoteVolume,rsi:null}));
   coins=[...bybitCoins,...binanceCoins];coinMap=new Map(coins.map(c=>[c.symbol,c]));
-  if(!coinMap.has(selected))selected="BYBIT:BTCUSDT";
+  if(!coinMap.has(selected))selected=coinMap.has("BYBIT:BTCUSDT")?"BYBIT:BTCUSDT":(coins[0]?.symbol||"");
   if(!intervalMs[tf])tf="30";
   document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===tf));
   $("connection").textContent="LIVE";buildList();await selectCoin(selected);runScanner();
