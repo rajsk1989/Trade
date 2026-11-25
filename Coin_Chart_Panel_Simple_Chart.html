@@ -387,7 +387,8 @@ async function getBinanceJSON(path){
     const err=new Error("Binance HTTP "+res.status+": "+message);
     err.status=res.status;
     err.retryAfter=Number(res.headers.get("Retry-After")||0);
-    // A rate limit is IP-wide: do not hammer other Binance hosts.
+    // Binance 418/429 is IP-wide. Stop immediately; switching hosts or retrying
+    // only increases the ban duration. The WebSocket remains available for live data.
     if(res.status===429||res.status===418)throw err;
     lastError=err;continue;
    }
@@ -399,16 +400,8 @@ async function getBinanceJSON(path){
   }catch(err){
    lastError=err;
    if(err.status===429||err.status===418){
-    const wait=Math.min(Math.max(err.retryAfter||3,3),30);
-    console.warn("Binance rate limit; waiting",wait,"seconds",err);
-    await new Promise(resolve=>setTimeout(resolve,wait*1000));
-    // Retry the same endpoint once after the server's cooldown.
-    try{
-     const retry=await fetch(host+path,{cache:"no-store",mode:"cors"});
-     const body=await retry.text();let value;try{value=JSON.parse(body);}catch(e){value=null;}
-     if(retry.ok&&value!==null)return value;
-     lastError=new Error("Binance retry HTTP "+retry.status+": "+(value?.msg||body.slice(0,160)));
-    }catch(retryError){lastError=retryError;}
+    window.binanceRestBlockedUntil=Date.now()+15*60*1000;
+    console.warn("Binance REST blocked by IP rate limit; stopping all REST retries.",err);
     break;
    }
    console.warn("Binance REST host failed:",host,err);
@@ -662,8 +655,12 @@ async function selectCoin(symbol,rangeAlreadySaved=false,forceFit=false){
   updateBarCountdown();
 
   connectSocket(symbol,tf);
-  $("historyStatus").textContent="Recent candles loaded · loading 2 months...";
-  loadOlderHistory(symbol,tf,token);
+  if(splitSymbol(symbol).exchange==="BINANCE"){
+   $("historyStatus").textContent="Recent Binance candles loaded · live updates via WebSocket";
+  }else{
+   $("historyStatus").textContent="Recent candles loaded · loading 2 months...";
+   loadOlderHistory(symbol,tf,token);
+  }
  }catch(e){
   console.error("Chart load failed for "+symbol+":",e);
   if(id===requestId&&symbol===selected){
@@ -692,9 +689,13 @@ async function runScanner(){
   while(cursor<total){
    const coin=queue[cursor++];
    try{
-    const data=await getRecentKlines(coin.symbol,scanInterval,100);
-    // For the selected coin, use the exact chart candle series (including its live candle).
-    coin.rsi=coin.symbol===selected&&tf===scanInterval&&candles.length?calcRSI(candles):calcRSI(data);
+    if(splitSymbol(coin.symbol).exchange==="BINANCE"){
+     // Avoid hundreds of REST calls that can trigger Binance IP bans.
+     coin.rsi=coin.symbol===selected&&tf===scanInterval&&candles.length?calcRSI(candles):null;
+    }else{
+     const data=await getRecentKlines(coin.symbol,scanInterval,100);
+     coin.rsi=coin.symbol===selected&&tf===scanInterval&&candles.length?calcRSI(candles):calcRSI(data);
+    }
     updateCoinRow(coin);
    }catch(e){if(coin.symbol!==selected)coin.rsi=null;}
    done++;if(done%10===0||done===total){$("rsiCount").textContent="RSI "+done+"/"+total;scheduleFilter();}
@@ -719,13 +720,11 @@ setInterval(updateBarCountdown,1000);
 async function loadMarket(){
  // Load exchanges independently: one exchange/API failing must not prevent the
  // selected coin's own candle endpoint from loading.
- const [bybitSettled,binanceSettled,infoSettled]=await Promise.allSettled([
+ const [bybitSettled,infoSettled]=await Promise.allSettled([
   getJSON("/v5/market/tickers?category=linear"),
-  getBinanceJSON("/fapi/v1/ticker/24hr"),
   getBinanceJSON("/fapi/v1/exchangeInfo")
  ]);
  const bybitResult=bybitSettled.status==="fulfilled"?bybitSettled.value:null;
- const binanceResult=binanceSettled.status==="fulfilled"?binanceSettled.value:[];
  const binanceInfo=infoSettled.status==="fulfilled"?infoSettled.value:null;
  if(bybitResult){
   const bybitCoins=(bybitResult.list||[]).filter(x=>x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BYBIT:"+x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
@@ -733,7 +732,7 @@ async function loadMarket(){
  }
  if(binanceInfo){
   const perpetualUsdt=new Set((binanceInfo.symbols||[]).filter(x=>x.status==="TRADING"&&x.contractType==="PERPETUAL"&&x.quoteAsset==="USDT").map(x=>x.symbol));
-  const binanceCoins=(binanceResult||[]).filter(x=>perpetualUsdt.has(x.symbol)&&x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BINANCE:"+x.symbol,price:+x.lastPrice,change:+x.priceChangePercent,volume:+x.quoteVolume,rsi:null}));
+  const binanceCoins=[...perpetualUsdt].filter(symbol=>symbol.endsWith("USDT")&&symbol.length>4).map(symbol=>({symbol:"BINANCE:"+symbol,price:0,change:0,volume:0,rsi:null}));
   coins.push(...binanceCoins);
  }
  coinMap=new Map(coins.map(c=>[c.symbol,c]));
@@ -753,13 +752,12 @@ async function loadMarket(){
  buildList();
  if(selected)await selectCoin(selected);
  if(coins.length)runScanner();
- if(!bybitResult&&!binanceInfo)console.warn("Ticker discovery unavailable; selected coin candle loading was still attempted.",bybitSettled.reason,binanceSettled.reason,infoSettled.reason);
+ if(!bybitResult&&!binanceInfo)console.warn("Ticker discovery unavailable; selected coin candle loading was still attempted.",bybitSettled.reason,infoSettled.reason);
 }
 async function refreshTickers(){
  try{
-  const [bybitResult,binanceResult]=await Promise.all([getJSON("/v5/market/tickers?category=linear"),getBinanceJSON("/fapi/v1/ticker/24hr")]);
+  const bybitResult=await getJSON("/v5/market/tickers?category=linear");
   (bybitResult.list||[]).forEach(d=>{const c=coinMap.get("BYBIT:"+d.symbol);if(!c)return;c.price=+d.lastPrice;c.change=+d.price24hPcnt*100;c.volume=+d.turnover24h;updateCoinRow(c);});
-  (binanceResult||[]).forEach(d=>{const c=coinMap.get("BINANCE:"+d.symbol);if(!c)return;c.price=+d.lastPrice;c.change=+d.priceChangePercent;c.volume=+d.quoteVolume;updateCoinRow(c);});
   const coin=coinMap.get(selected);if(coin){$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";}
  }catch(e){console.warn(e);}
 }
