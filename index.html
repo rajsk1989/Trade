@@ -234,7 +234,7 @@ setInterval(refreshTickers,3000);setInterval(()=>{if(!scanBusy)scanAll()},300000
   const parts=key.split(":");if(parts.length!==2)return;
   const exchange=parts[0],symbol=parts[1];
   if(!/^[A-Z0-9]+USDT$/.test(symbol)) return;
-  const chartUrl="Coin_Chart_Panel_Simple_Chart.html?symbol="+encodeURIComponent(symbol);
+  const chartUrl="Coin_Chart_Panel_Simple_Chart.html?symbol="+encodeURIComponent(key);
   window.open(chartUrl,"_blank","noopener");
  }
  document.getElementById("heatBody").addEventListener("click",function(e){
