@@ -669,21 +669,43 @@ function updateBarCountdown(){
 }
 setInterval(updateBarCountdown,1000);
 async function loadMarket(){
- try{
-  const [bybitResult,binanceResult,binanceInfo]=await Promise.all([
-   getJSON("/v5/market/tickers?category=linear"),
-   getBinanceJSON("/fapi/v1/ticker/24hr"),
-   getBinanceJSON("/fapi/v1/exchangeInfo")
-  ]);
+ // Load exchanges independently: one exchange/API failing must not prevent the
+ // selected coin's own candle endpoint from loading.
+ const [bybitSettled,binanceSettled,infoSettled]=await Promise.allSettled([
+  getJSON("/v5/market/tickers?category=linear"),
+  getBinanceJSON("/fapi/v1/ticker/24hr"),
+  getBinanceJSON("/fapi/v1/exchangeInfo")
+ ]);
+ const bybitResult=bybitSettled.status==="fulfilled"?bybitSettled.value:null;
+ const binanceResult=binanceSettled.status==="fulfilled"?binanceSettled.value:[];
+ const binanceInfo=infoSettled.status==="fulfilled"?infoSettled.value:null;
+ if(bybitResult){
   const bybitCoins=(bybitResult.list||[]).filter(x=>x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BYBIT:"+x.symbol,price:+x.lastPrice,change:+x.price24hPcnt*100,volume:+x.turnover24h,rsi:null}));
+  coins.push(...bybitCoins);
+ }
+ if(binanceInfo){
   const perpetualUsdt=new Set((binanceInfo.symbols||[]).filter(x=>x.status==="TRADING"&&x.contractType==="PERPETUAL"&&x.quoteAsset==="USDT").map(x=>x.symbol));
   const binanceCoins=(binanceResult||[]).filter(x=>perpetualUsdt.has(x.symbol)&&x.symbol.endsWith("USDT")&&x.symbol.length>4).map(x=>({symbol:"BINANCE:"+x.symbol,price:+x.lastPrice,change:+x.priceChangePercent,volume:+x.quoteVolume,rsi:null}));
-  coins=[...bybitCoins,...binanceCoins];coinMap=new Map(coins.map(c=>[c.symbol,c]));
-  if(!coinMap.has(selected))selected=coinMap.has("BYBIT:BTCUSDT")?"BYBIT:BTCUSDT":(coins[0]?.symbol||"");
-  if(!intervalMs[tf])tf="30";
-  document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===tf));
-  $("connection").textContent="LIVE";buildList();await selectCoin(selected);runScanner();
- }catch(e){console.error(e);$("connection").textContent="API ERROR";$("coinList").innerHTML='<div class="empty">Market connection failed. Check internet / refresh page.</div>';}
+  coins.push(...binanceCoins);
+ }
+ coinMap=new Map(coins.map(c=>[c.symbol,c]));
+ // The symbol comes from the heatmap URL. Add it even if ticker discovery
+ // failed, so selectCoin can request its candles directly.
+ if(selected&&!coinMap.has(selected)){
+  const {exchange,symbol}=splitSymbol(selected);
+  if(/^[A-Z0-9]+USDT$/.test(symbol)){
+   const placeholder={symbol:selected,price:0,change:0,volume:0,rsi:null};
+   coins.unshift(placeholder);coinMap.set(selected,placeholder);
+  }
+ }
+ if(!coinMap.has(selected))selected=coinMap.has("BYBIT:BTCUSDT")?"BYBIT:BTCUSDT":(coins[0]?.symbol||"");
+ if(!intervalMs[tf])tf="30";
+ document.querySelectorAll("[data-tf]").forEach(b=>b.classList.toggle("active",b.dataset.tf===tf));
+ $("connection").textContent=(bybitResult||binanceInfo)?"LIVE":"CANDLE MODE";
+ buildList();
+ if(selected)await selectCoin(selected);
+ if(coins.length)runScanner();
+ if(!bybitResult&&!binanceInfo)console.warn("Ticker discovery unavailable; selected coin candle loading was still attempted.",bybitSettled.reason,binanceSettled.reason,infoSettled.reason);
 }
 async function refreshTickers(){
  try{
