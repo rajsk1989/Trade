@@ -559,39 +559,89 @@ function connectSocket(key=selected, interval=tf){
  closeSocket();
  const {exchange,symbol}=splitSymbol(key);
  let ws;
+ const isBinance=exchange==="BINANCE";
+ const streamUrl=isBinance
+  ? "wss://fstream.binance.com/ws/"+symbol.toLowerCase()+"@kline_"+apiInterval(interval)
+  : WS;
  try{
-  ws=exchange==="BINANCE"?new WebSocket(BINANCE_WS+symbol.toLowerCase()+"@ticker/"+symbol.toLowerCase()+"@kline_"+apiInterval(interval)):new WebSocket(WS);
+  ws=new WebSocket(streamUrl);
  }catch(err){
   console.error("WebSocket creation failed:",err);
   $("connection").textContent="WS ERROR";
-  reconnectTimer=setTimeout(()=>{if(selected===key&&tf===interval)connectSocket(key,interval);},3000);
+  $("historyStatus").textContent="WebSocket could not start: "+(err.message||"browser/network error");
+  reconnectTimer=setTimeout(()=>{if(selected===key&&tf===interval)connectSocket(key,interval);},4000);
   return;
  }
  socket=ws;
- ws.onopen=()=>{if(socket!==ws||selected!==key||tf!==interval)return;$("connection").textContent="LIVE";if(exchange==="BYBIT")ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));else $("historyStatus").textContent="Binance WebSocket connected · receiving live market data";};
+ let opened=false;
+ const timeout=setTimeout(()=>{
+  if(socket===ws&&!opened){
+   $("historyStatus").textContent=(isBinance?"Binance":"Bybit")+" WebSocket connection timed out";
+   try{ws.close();}catch(e){}
+  }
+ },10000);
+ ws.onopen=()=>{
+  if(socket!==ws||selected!==key||tf!==interval)return;
+  opened=true;clearTimeout(timeout);
+  $("connection").textContent="LIVE";
+  $("historyStatus").textContent=isBinance
+   ?"Binance Futures WebSocket connected · waiting for candle data..."
+   :"Bybit WebSocket connected";
+  if(!isBinance)ws.send(JSON.stringify({op:"subscribe",args:["tickers."+symbol,"kline."+interval+"."+symbol]}));
+ };
  ws.onmessage=event=>{
   if(socket!==ws||selected!==key||tf!==interval)return;
   let msg;try{msg=JSON.parse(event.data);}catch(e){return;}
-  if(exchange==="BINANCE"){
+  if(isBinance){
+   // Direct Binance Futures kline stream sends the event object (not a
+   // combined-stream {stream,data} wrapper).
    const d=msg.data||msg;
-   if(d.e==="24hrTicker"){
-    const coin=coinMap.get(key);
-    if(coin){coin.price=+d.c;coin.change=+d.P;coin.volume=+d.q||coin.volume;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";updateCoinRow(coin);}
-   }
    if(d.e==="kline"&&d.k){
-    const k=d.k,candle={time:Math.floor(+k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
+    const k=d.k;
+    const candle={time:Math.floor(+k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
+    if(![candle.time,candle.open,candle.high,candle.low,candle.close,candle.volume].every(Number.isFinite))return;
     updateLiveCandle(candle,key);
-    const coin=coinMap.get(key);if(coin){coin.price=candle.close;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();}
-    $("historyStatus").textContent="Binance WebSocket live · "+candles.length+" candles collected";
+    const coin=coinMap.get(key);
+    if(coin){
+     coin.price=candle.close;
+     $("selectedPrice").textContent="$"+fmt(coin.price);
+     updateBrowserTabTitle();
+     updateCoinRow(coin);
+    }
+    $("historyStatus").textContent="Binance Futures live · "+candles.length+" live candles collected";
    }
    return;
   }
   if(!msg.data)return;
-  if(msg.topic==="tickers."+symbol){const d=Array.isArray(msg.data)?msg.data[0]:msg.data,coin=coinMap.get(key);if(!coin)return;if(d.lastPrice!==undefined)coin.price=+d.lastPrice;if(d.price24hPcnt!==undefined)coin.change=+d.price24hPcnt*100;$("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();$("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";updateCoinRow(coin);}
-  if(msg.topic==="kline."+interval+"."+symbol){const arr=Array.isArray(msg.data)?msg.data:[msg.data];for(const d of arr)updateLiveCandle({time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume},key);}
+  if(msg.topic==="tickers."+symbol){
+   const d=Array.isArray(msg.data)?msg.data[0]:msg.data,coin=coinMap.get(key);
+   if(!coin)return;
+   if(d.lastPrice!==undefined)coin.price=+d.lastPrice;
+   if(d.price24hPcnt!==undefined)coin.change=+d.price24hPcnt*100;
+   $("selectedPrice").textContent="$"+fmt(coin.price);updateBrowserTabTitle();
+   $("selectedChange").textContent=(coin.change>=0?"+":"")+coin.change.toFixed(2)+"%";
+   updateCoinRow(coin);
+  }
+  if(msg.topic==="kline."+interval+"."+symbol){
+   const arr=Array.isArray(msg.data)?msg.data:[msg.data];
+   for(const d of arr)updateLiveCandle({time:Math.floor(+d.start/1000),open:+d.open,high:+d.high,low:+d.low,close:+d.close,volume:+d.volume},key);
+  }
  };
- ws.onerror=()=>{if(socket===ws)$("connection").textContent="WS ERROR";};
- ws.onclose=()=>{if(socket!==ws)return;$("connection").textContent="RECONNECTING";reconnectTimer=setTimeout(()=>{if(socket===ws&&selected===key&&tf===interval)connectSocket(key,interval);},2000);};
+ ws.onerror=()=>{
+  if(socket!==ws)return;
+  clearTimeout(timeout);
+  $("connection").textContent="WS ERROR";
+  $("historyStatus").textContent=isBinance
+   ?"Binance WebSocket error · check whether fstream.binance.com is blocked"
+   :"Bybit WebSocket error";
+ };
+ ws.onclose=()=>{
+  clearTimeout(timeout);
+  if(socket!==ws)return;
+  $("connection").textContent="RECONNECTING";
+  $("historyStatus").textContent=(isBinance?"Binance":"Bybit")+" WebSocket disconnected · reconnecting...";
+  reconnectTimer=setTimeout(()=>{if(socket===ws&&selected===key&&tf===interval)connectSocket(key,interval);},3000);
+ };
 }
 function updateLiveCandle(c,key){
  const lastIndex=candles.length-1,lastCandle=candles[lastIndex];
